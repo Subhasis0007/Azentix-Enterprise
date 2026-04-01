@@ -1,0 +1,6 @@
+@Azentix.AgentHost_HostAddress = http://localhost:5082
+
+GET {{Azentix.AgentHost_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
