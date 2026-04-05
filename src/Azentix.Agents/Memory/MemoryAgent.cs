@@ -4,27 +4,35 @@ namespace Azentix.Agents.Memory;
 
 public interface IMemoryAgent
 {
-    Task StoreAsync(string collection, string key, string content, float[] embedding, CancellationToken ct = default);
-    Task<List<MemorySearchResult>> RecallAsync(string collection, float[] queryEmbedding, int topK = 5, CancellationToken ct = default);
+    Task StoreAsync(string collection, string key, string content,
+        float[] embedding, CancellationToken ct = default);
+    Task<List<MemoryResult>> RecallAsync(string collection,
+        float[] queryEmbedding, int topK = 5, CancellationToken ct = default);
+    Task ClearSessionAsync(string agentId, CancellationToken ct = default);
 }
 
 public class MemoryAgent : IMemoryAgent
 {
-    private readonly IVectorMemory _memory;
-    private readonly ILogger<MemoryAgent> _logger;
+    private readonly IVectorMemory _store;
+    private readonly ILogger<MemoryAgent> _log;
 
-    public MemoryAgent(IVectorMemory memory, ILogger<MemoryAgent> logger)
-    { _memory = memory; _logger = logger; }
+    public MemoryAgent(IVectorMemory store, ILogger<MemoryAgent> log)
+    { _store = store; _log = log; }
 
-    public Task StoreAsync(string collection, string key, string content, float[] embedding, CancellationToken ct = default)
+    public Task StoreAsync(string collection, string key, string content,
+        float[] embedding, CancellationToken ct = default)
     {
-        _logger.LogInformation("MemoryAgent Store: {Key} -> {Col}", key, collection);
-        return _memory.SaveAsync(collection, key, content, "", embedding, "{}", ct);
+        _log.LogDebug("Store: {Key} -> {Col}", key, collection);
+        return _store.SaveAsync(collection, key, content, embedding, "{}", ct);
     }
 
-    public Task<List<MemorySearchResult>> RecallAsync(string collection, float[] queryEmbedding, int topK = 5, CancellationToken ct = default)
+    public Task<List<MemoryResult>> RecallAsync(string collection,
+        float[] queryEmbedding, int topK = 5, CancellationToken ct = default)
     {
-        _logger.LogInformation("MemoryAgent Recall: {Col} top{K}", collection, topK);
-        return _memory.SearchAsync(collection, queryEmbedding, topK, 0.7, ct);
+        _log.LogDebug("Recall: {Col} top{N}", collection, topK);
+        return _store.SearchAsync(collection, queryEmbedding, topK, 0.7, ct);
     }
+
+    public Task ClearSessionAsync(string agentId, CancellationToken ct = default)
+        => _store.DeleteWorkingMemoryAsync(agentId, ct);
 }

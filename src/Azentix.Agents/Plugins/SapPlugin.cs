@@ -9,101 +9,100 @@ namespace Azentix.Agents.Plugins;
 public class SapPlugin
 {
     private readonly HttpClient _http;
-    private readonly ILogger<SapPlugin> _logger;
-    private readonly SapConfiguration _config;
+    private readonly SapConfiguration _cfg;
+    private readonly ILogger<SapPlugin> _log;
 
-    public SapPlugin(HttpClient http, ILogger<SapPlugin> logger, SapConfiguration config)
+    public SapPlugin(HttpClient http, SapConfiguration cfg, ILogger<SapPlugin> log)
     {
-        _http = http; _logger = logger; _config = config;
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("APIKey", config.ApiKey);
+        _http = http; _cfg = cfg; _log = log;
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("APIKey", cfg.ApiKey);
         _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json");
     }
 
     [KernelFunction("sap_get_material")]
-    [Description("Get product/material master data from SAP. Returns description, unit, material group.")]
+    [Description("Get SAP material master data. Returns description, unit, material group.")]
     public async Task<string> GetMaterialAsync(
         [Description("SAP material number e.g. MAT-001234")] string materialNumber)
     {
-        _logger.LogInformation("SAP GetMaterial: {Mat}", materialNumber);
-        try {
+        try
+        {
             var resp = await _http.GetAsync(
-                $"{_config.BaseUrl}/sap/opu/odata/sap/API_PRODUCT_SRV/A_Product('{materialNumber}')" +
+                $"{_cfg.BaseUrl}/sap/opu/odata/sap/API_PRODUCT_SRV/A_Product('{materialNumber}')" +
                 "?$select=Product,ProductDescription,BaseUnit,MaterialGroup");
-            if (!resp.IsSuccessStatusCode)
-                return JsonSerializer.Serialize(new {
-                    Product = materialNumber, ProductDescription = "Sandbox Demo Product",
-                    BaseUnit = "EA", MaterialGroup = "FERT", source = "SAP_MOCK" });
-            return await resp.Content.ReadAsStringAsync();
-        } catch (Exception ex) {
-            _logger.LogError(ex, "SAP GetMaterial failed");
-            return JsonSerializer.Serialize(new { error = ex.Message, materialNumber });
+            if (resp.IsSuccessStatusCode) return await resp.Content.ReadAsStringAsync();
         }
+        catch (Exception ex) { _log.LogWarning("SAP material fallback: {M}", ex.Message); }
+        return JsonSerializer.Serialize(new {
+            Product = materialNumber, ProductDescription = "SAP Sandbox Product",
+            BaseUnit = "EA", MaterialGroup = "FERT", _source = "mock" });
     }
 
     [KernelFunction("sap_get_price")]
-    [Description("Get current pricing conditions from SAP for a material. Returns price, currency, validity dates.")]
+    [Description("Get SAP pricing conditions. Returns price, currency, validity dates.")]
     public async Task<string> GetPriceAsync(
         [Description("SAP material number")] string materialNumber,
-        [Description("Sales org e.g. GB01")] string salesOrg = "GB01")
+        [Description("Sales organisation e.g. GB01")] string salesOrg = "GB01")
     {
-        _logger.LogInformation("SAP GetPrice: {Mat} | {Org}", materialNumber, salesOrg);
-        try {
+        try
+        {
             var filter = Uri.EscapeDataString(
-                "Material eq '" + materialNumber + "' and SalesOrganization eq '" + salesOrg + "'");
+                $"Material eq '{materialNumber}' and SalesOrganization eq '{salesOrg}'");
             var resp = await _http.GetAsync(
-                $"{_config.BaseUrl}/sap/opu/odata/sap/API_SLSPRICINGCONDITIONRECORD_SRV/" +
+                $"{_cfg.BaseUrl}/sap/opu/odata/sap/API_SLSPRICINGCONDITIONRECORD_SRV/" +
                 $"A_SlsPrcgCndnRecdValidity?$filter={filter}" +
                 "&$select=Material,SalesOrganization,ConditionRateValue,ConditionRateValueUnit," +
                 "ValidityStartDate,ValidityEndDate&$orderby=ValidityStartDate desc&$top=1");
-            if (!resp.IsSuccessStatusCode)
-                return JsonSerializer.Serialize(new {
-                    Material = materialNumber, ConditionRateValue = 249.99m,
-                    ConditionRateValueUnit = "GBP", SalesOrganization = salesOrg,
-                    ValidityStartDate = "2024-01-01", source = "SAP_MOCK" });
-            return await resp.Content.ReadAsStringAsync();
-        } catch (Exception ex) {
-            return JsonSerializer.Serialize(new {
-                Material = materialNumber, ConditionRateValue = 249.99m,
-                ConditionRateValueUnit = "GBP", note = "SAP_EXCEPTION_MOCK" });
+            if (resp.IsSuccessStatusCode) return await resp.Content.ReadAsStringAsync();
         }
+        catch (Exception ex) { _log.LogWarning("SAP price fallback: {M}", ex.Message); }
+        return JsonSerializer.Serialize(new {
+            Material = materialNumber, ConditionRateValue = 249.99m,
+            ConditionRateValueUnit = "GBP", SalesOrganization = salesOrg,
+            ValidityStartDate = "2024-01-01", _source = "mock" });
     }
 
     [KernelFunction("sap_get_inventory")]
-    [Description("Get real-time stock levels for a material from SAP across all storage locations.")]
+    [Description("Get real-time SAP stock levels for a material.")]
     public async Task<string> GetInventoryAsync(
         [Description("SAP material number")] string materialNumber,
         [Description("Plant code e.g. PL01")] string plant = "PL01")
     {
-        try {
-            var filter = Uri.EscapeDataString("Material eq '" + materialNumber + "' and Plant eq '" + plant + "'");
+        try
+        {
+            var filter = Uri.EscapeDataString(
+                $"Material eq '{materialNumber}' and Plant eq '{plant}'");
             var resp = await _http.GetAsync(
-                $"{_config.BaseUrl}/sap/opu/odata/sap/API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod?" +
-                $"$filter={filter}&$select=Material,Plant,StorageLocation,MatlWrhsStkQtyInMatBaseUnit,BaseUnit");
-            if (!resp.IsSuccessStatusCode)
-                return JsonSerializer.Serialize(new { Material = materialNumber, Plant = plant,
-                    MatlWrhsStkQtyInMatBaseUnit = 150.0m, BaseUnit = "EA", source = "SAP_MOCK" });
-            return await resp.Content.ReadAsStringAsync();
-        } catch (Exception ex) {
-            return JsonSerializer.Serialize(new { error = ex.Message, materialNumber });
+                $"{_cfg.BaseUrl}/sap/opu/odata/sap/API_MATERIAL_STOCK_SRV/A_MatlStkInAcctMod" +
+                $"?$filter={filter}&$select=Material,Plant,MatlWrhsStkQtyInMatBaseUnit,BaseUnit");
+            if (resp.IsSuccessStatusCode) return await resp.Content.ReadAsStringAsync();
         }
+        catch (Exception ex) { _log.LogWarning("SAP inventory fallback: {M}", ex.Message); }
+        return JsonSerializer.Serialize(new {
+            Material = materialNumber, Plant = plant,
+            MatlWrhsStkQtyInMatBaseUnit = 150.0m, BaseUnit = "EA", _source = "mock" });
     }
 
     [KernelFunction("sap_compare_prices")]
-    [Description("Compare SAP price with Salesforce price. Returns discrepancy analysis and recommended action.")]
+    [Description("Compare SAP price vs Salesforce price. Returns discrepancy analysis and recommended action.")]
     public Task<string> ComparePricesAsync(
         [Description("SAP material number")] string materialNumber,
-        [Description("SAP price")] decimal sapPrice,
-        [Description("Salesforce current price")] decimal salesforcePrice,
+        [Description("SAP price as decimal")] decimal sapPrice,
+        [Description("Salesforce current price as decimal")] decimal sfPrice,
         [Description("Currency code e.g. GBP")] string currency = "GBP")
     {
-        var diff = sapPrice - salesforcePrice;
-        var pct = salesforcePrice > 0 ? Math.Abs(diff / salesforcePrice * 100) : 0;
+        var diff = sapPrice - sfPrice;
+        var pct  = sfPrice > 0 ? Math.Abs(diff / sfPrice * 100m) : 0m;
         return Task.FromResult(JsonSerializer.Serialize(new {
-            materialNumber, sapPrice, salesforcePrice, currency,
-            discrepancy = diff, discrepancyPercent = Math.Round(pct, 2),
+            materialNumber, sapPrice, sfPrice, currency,
+            discrepancy = Math.Round(diff, 2),
+            discrepancyPercent = Math.Round(pct, 2),
             syncRequired = pct > 0.01m,
-            approvalLevel = pct < 1 ? "auto" : pct < 10 ? "finance_manager" : "vp_sales",
-            recommendation = pct < 1 ? "AUTO_SYNC" : pct < 10 ? "SYNC_WITH_APPROVAL" : "ESCALATE_VP"
+            approvalLevel = pct < 1m ? "auto"
+                          : pct < 10m ? "finance_manager"
+                          : "vp_sales",
+            recommendation = pct < 1m ? "AUTO_SYNC"
+                           : pct < 10m ? "SYNC_WITH_APPROVAL"
+                           : "ESCALATE_VP"
         }));
     }
 }

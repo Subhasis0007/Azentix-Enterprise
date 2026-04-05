@@ -8,29 +8,36 @@ on:
   workflow_dispatch:
 
 env:
-  DOTNET_VERSION: '8.0.x'
-  PYTHON_VERSION: '3.11'
+  DOTNET_VERSION: "8.0.x"
+  PYTHON_VERSION: "3.11"
 
 jobs:
-  build-dotnet:
-    name: Build and Test .NET
+  # ── .NET build + unit tests ──────────────────────────────────────────
+  dotnet-build-test:
+    name: .NET Build & Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Restore NuGet packages
+
+      - name: Restore
         run: dotnet restore src/Azentix.sln
-      - name: Build solution
+
+      - name: Build
         run: dotnet build src/Azentix.sln --no-restore --configuration Release
-      - name: Run unit tests
+
+      - name: Unit Tests
         run: |
-          dotnet test src/Azentix.sln --no-build --configuration Release \
+          dotnet test src/Azentix.sln \
+            --no-build --configuration Release \
             --filter "Category=Unit" \
             --collect:"XPlat Code Coverage" \
             --results-directory ./coverage \
-            --logger "trx;LogFileName=test-results.trx"
+            --logger "trx;LogFileName=results.trx"
+
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always()
@@ -38,79 +45,96 @@ jobs:
           directory: ./coverage
           flags: dotnet
 
-  test-python:
-    name: Test Python LangGraph
+  # ── Python flow tests ────────────────────────────────────────────────
+  python-tests:
+    name: Python Flow Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - name: Install dependencies
-        run: pip install -r src/langgraph/requirements.txt
-      - name: Run Python tests (unit only)
-        run: python -m pytest tests/python/ -v -m "not integration" --tb=short
-        env:
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          SUPABASE_DB_CONNECTION: ${{ secrets.SUPABASE_DB_CONNECTION }}
-          CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
-          SAP_API_KEY: ${{ secrets.SAP_API_KEY }}
-          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
-          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
-          SERVICENOW_INSTANCE_URL: ${{ secrets.SERVICENOW_INSTANCE_URL }}
-          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
 
-  validate-kong:
-    name: Validate Kong Configuration
+      - name: Install deps
+        run: pip install -r src/langgraph/requirements.txt
+
+      - name: Run tests (no integration)
+        run: python3 scripts/test_flows.py
+        env:
+          AZURE_OPENAI_ENDPOINT:    ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY:     ${{ secrets.AZURE_OPENAI_API_KEY }}
+          SUPABASE_DB_CONNECTION:   ${{ secrets.SUPABASE_DB_CONNECTION }}
+          CLOUDAMQP_URL:            ${{ secrets.CLOUDAMQP_URL }}
+          SAP_API_KEY:              ${{ secrets.SAP_API_KEY }}
+          SALESFORCE_CLIENT_ID:     ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SERVICENOW_INSTANCE_URL:  ${{ secrets.SERVICENOW_INSTANCE_URL }}
+          HUBSPOT_ACCESS_TOKEN:     ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY:        ${{ secrets.STRIPE_SECRET_KEY }}
+
+      - name: Run offline demo
+        run: python3 scripts/demo_offline.py
+
+  # ── Kong config validation ───────────────────────────────────────────
+  kong-validate:
+    name: Kong Configuration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install deck
         run: |
-          curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz | tar -xz
-          sudo mv deck /usr/local/bin/
-      - name: Validate kong.yml syntax
+          curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz \
+            | tar -xz && sudo mv deck /usr/local/bin/
+
+      - name: Validate kong.yml
         run: deck validate --state kong/kong.yml
 
+  # ── Docker build ─────────────────────────────────────────────────────
   docker-build:
-    name: Validate Docker Build
+    name: Docker Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -f src/Azentix.AgentHost/Dockerfile src/ -t azentix-test
-      - name: Smoke test container starts
+
+      - name: Build image
+        working-directory: src
+        run: docker build -f Azentix.AgentHost/Dockerfile -t azentix-test .
+
+      - name: Smoke test — container starts
         run: |
-          docker run -d --name test-container -p 5001:5000 \
+          docker run -d --name smoke -p 5001:5000 \
             -e ASPNETCORE_URLS="http://+:5000" \
             -e AZURE_OPENAI_ENDPOINT="https://placeholder.openai.azure.com/" \
-            -e AZURE_OPENAI_API_KEY="placeholder" \
+            -e AZURE_OPENAI_API_KEY="placeholder-key" \
             -e SUPABASE_URL="https://placeholder.supabase.co" \
             -e SUPABASE_ANON_KEY="placeholder" \
             -e SUPABASE_SERVICE_KEY="placeholder" \
             -e SUPABASE_DB_CONNECTION="Host=placeholder" \
             -e CLOUDAMQP_URL="amqp://guest:guest@localhost//" \
             azentix-test
-          sleep 15
-          docker logs test-container 2>&1 | tail -20
-          docker stop test-container
+          sleep 20
+          docker logs smoke 2>&1 | tail -20
+          docker stop smoke
 
-  security-scan:
+  # ── Security scan ────────────────────────────────────────────────────
+  security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Check .env not committed
         run: |
           if git ls-files --error-unmatch .env 2>/dev/null; then
-            echo "ERROR: .env file is committed! Remove it immediately."
+            echo "ERROR: .env is committed — remove it immediately!"
             exit 1
           fi
-          echo ".env is not committed. Good."
-      - name: Scan for secrets (TruffleHog)
+          echo ".env is not tracked. Good."
+
+      - name: TruffleHog secret scan
         uses: trufflesecurity/trufflehog@main
         with:
           path: "./"

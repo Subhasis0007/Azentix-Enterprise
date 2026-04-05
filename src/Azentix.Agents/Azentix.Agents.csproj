@@ -3,7 +3,6 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>Azentix.Agents</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Azentix.Models\Azentix.Models.csproj" />

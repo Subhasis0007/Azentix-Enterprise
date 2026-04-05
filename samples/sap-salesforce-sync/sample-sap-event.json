@@ -8,5 +8,5 @@
   "currency": "GBP",
   "salesOrg": "GB01",
   "validityStart": "2024-11-01",
-  "changedBy": "SAP_BATCH_JOB"
+  "changedBy": "SAP_PRICING_BATCH"
 }

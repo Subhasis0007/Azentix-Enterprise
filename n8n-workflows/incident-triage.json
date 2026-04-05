@@ -1,39 +1,37 @@
 {
-  "name": "Azentix ServiceNow Incident Triage",
+  "name": "Azentix — ServiceNow Incident Triage",
+  "active": false,
   "nodes": [
     {
       "parameters": { "queue": "servicenow-incidents", "options": { "contentIsJson": true } },
-      "name": "RabbitMQ Trigger", "type": "n8n-nodes-base.rabbitMq", "typeVersion": 1,
-      "position": [200, 300], "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
+      "name": "1_RabbitMQ_Trigger", "type": "n8n-nodes-base.rabbitMq",
+      "typeVersion": 1, "position": [200, 300],
+      "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
     },
     {
       "parameters": {
-        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute", "method": "POST",
+        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute",
+        "method": "POST",
         "sendHeaders": true,
         "headerParameters": { "parameters": [
           { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-API-Key", "value": "={{ $env.KONG_API_KEY_AZENTIX }}" }
+          { "name": "X-API-Key",   "value": "={{ $env.KONG_API_KEY_AZENTIX }}" }
         ]},
-        "sendBody": true,
-        "bodyParameters": { "parameters": [
-          { "name": "taskType", "value": "servicenow-incident-triage" },
-          { "name": "priority", "value": "High" },
-          { "name": "description", "value": "=Triage ServiceNow incident {{ $json.incidentNumber }}" },
-          { "name": "inputData", "value": "={{ JSON.stringify({ incidentNumber: $json.incidentNumber }) }}" }
-        ]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ taskType: 'servicenow-incident-triage', priority: 'High', description: 'Triage ServiceNow incident ' + $json.incidentNumber, inputData: { incidentNumber: $json.incidentNumber }, context: 'Auto-classify, search KB, route P3/P4 or escalate P1/P2.' }) }}",
         "options": { "timeout": 120000 }
       },
-      "name": "Triage Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [440, 300]
+      "name": "2_Triage_Agent", "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4, "position": [440, 300]
     },
     {
-      "parameters": { "queue": "notifications",
-        "message": "={{ JSON.stringify({ type: 'incident_triaged', incident: $('RabbitMQ Trigger').item.json.incidentNumber, status: $json.status }) }}" },
-      "name": "Notify", "type": "n8n-nodes-base.rabbitMq", "position": [680, 300],
+      "parameters": { "queue": "notifications", "message": "={{ JSON.stringify({ type: 'incident_triaged', incident: $('1_RabbitMQ_Trigger').item.json.incidentNumber, status: $json.status, answer: $json.finalAnswer }) }}" },
+      "name": "3_Notify", "type": "n8n-nodes-base.rabbitMq", "position": [680, 300],
       "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
     }
   ],
   "connections": {
-    "RabbitMQ Trigger": { "main": [[{ "node": "Triage Agent", "type": "main", "index": 0 }]] },
-    "Triage Agent": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] }
+    "1_RabbitMQ_Trigger": { "main": [[{ "node": "2_Triage_Agent", "type": "main", "index": 0 }]] },
+    "2_Triage_Agent":     { "main": [[{ "node": "3_Notify",        "type": "main", "index": 0 }]] }
   }
 }

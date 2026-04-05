@@ -1,14 +1,17 @@
-# Stage 1: Build
+# ── Stage 1: build ───────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /app
+WORKDIR /src
 
+# Copy project files first (better layer caching)
 COPY Azentix.sln .
-COPY Azentix.AgentHost/Azentix.AgentHost.csproj Azentix.AgentHost/
-COPY Azentix.Agents/Azentix.Agents.csproj Azentix.Agents/
-COPY Azentix.Models/Azentix.Models.csproj Azentix.Models/
+COPY Azentix.AgentHost/Azentix.AgentHost.csproj   Azentix.AgentHost/
+COPY Azentix.Agents/Azentix.Agents.csproj          Azentix.Agents/
+COPY Azentix.Models/Azentix.Models.csproj           Azentix.Models/
+COPY Azentix.Tests.Unit/Azentix.Tests.Unit.csproj   Azentix.Tests.Unit/
 
 RUN dotnet restore Azentix.sln
 
+# Copy all source
 COPY . .
 
 RUN dotnet publish Azentix.AgentHost/Azentix.AgentHost.csproj \
@@ -18,9 +21,12 @@ RUN dotnet publish Azentix.AgentHost/Azentix.AgentHost.csproj \
     --runtime linux-x64 \
     --self-contained false
 
-# Stage 2: Runtime
+# ── Stage 2: runtime ─────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y curl --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
 

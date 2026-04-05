@@ -1,8 +1,9 @@
 {
   "incidentNumber": "INC0001234",
   "shortDescription": "SAP OData API returning 503 errors for product master calls",
+  "description": "Integration monitor detected repeated 503 responses from SAP gateway at api.sap.com. Affecting product master reads from Azentix agent.",
   "priority": "2",
   "category": "sap",
   "affectedSystem": "SAP S/4HANA",
-  "reportedBy": "integration_monitor"
+  "reportedBy": "azentix_monitor"
 }
