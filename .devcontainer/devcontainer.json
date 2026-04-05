@@ -1,5 +1,5 @@
 {
-  "name": "Azentix Development Environment",
+  "name": "Azentix Dev",
   "image": "mcr.microsoft.com/devcontainers/dotnet:8.0",
   "features": {
     "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
@@ -16,12 +16,11 @@
         "ms-python.python",
         "github.copilot",
         "humao.rest-client",
-        "yzhang.markdown-all-in-one",
         "ms-vscode.docker"
       ]
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "forwardPorts": [5000, 5001, 8000, 8001, 5678, 3000],
+  "forwardPorts": [5000, 8000, 8001, 5678, 3000],
   "remoteEnv": { "DOTNET_CLI_TELEMETRY_OPTOUT": "1" }
 }

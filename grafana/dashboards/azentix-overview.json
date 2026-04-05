@@ -1,29 +1,31 @@
 {
   "title": "Azentix — Agent Overview",
-  "uid": "azentix-overview",
+  "uid":   "azentix-overview",
   "schemaVersion": 38,
+  "time": { "from": "now-6h", "to": "now" },
   "panels": [
     {
-      "type": "stat",
-      "title": "Agent Executions (24h)",
-      "targets": [{ "expr": "count_over_time({app=\"azentix\"} |= \"DirectorAgent END\" [24h])", "legendFormat": "Executions" }],
+      "type": "stat", "title": "Executions (24h)",
+      "targets": [{ "expr": "count_over_time({app=\"azentix\"} |= \"DirectorAgent END\" [24h])" }],
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
     },
     {
-      "type": "stat",
-      "title": "Success Rate",
-      "targets": [{ "expr": "sum(count_over_time({app=\"azentix\"} |= \"Status=Completed\" [1h])) / sum(count_over_time({app=\"azentix\"} |= \"DirectorAgent END\" [1h])) * 100", "legendFormat": "%" }],
+      "type": "stat", "title": "Success Rate (1h)",
+      "targets": [{ "expr": "sum(count_over_time({app=\"azentix\"} |= \"Status=Completed\" [1h])) / sum(count_over_time({app=\"azentix\"} |= \"DirectorAgent END\" [1h])) * 100" }],
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
     },
     {
-      "type": "timeseries",
-      "title": "Agent Executions Over Time",
+      "type": "stat", "title": "Kong 429 Rate Limit Hits",
+      "targets": [{ "expr": "kong_http_requests_total{status=\"429\"}" }],
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "type": "timeseries", "title": "Agent Executions Over Time",
       "targets": [{ "expr": "count_over_time({app=\"azentix\"} |= \"DirectorAgent END\" [5m])", "legendFormat": "Executions/5m" }],
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 }
     },
     {
-      "type": "logs",
-      "title": "Recent Agent Logs",
+      "type": "logs", "title": "Recent Agent Audit Trail",
       "targets": [{ "expr": "{app=\"azentix\"} |= \"DirectorAgent\"" }],
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 }
     }

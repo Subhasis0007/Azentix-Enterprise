@@ -9,32 +9,27 @@ namespace Azentix.AgentHost.Controllers;
 public class AgentController : ControllerBase
 {
     private readonly IDirectorAgent _director;
-    private readonly ILogger<AgentController> _logger;
+    private readonly ILogger<AgentController> _log;
 
-    public AgentController(IDirectorAgent director, ILogger<AgentController> logger)
-    { _director = director; _logger = logger; }
+    public AgentController(IDirectorAgent director, ILogger<AgentController> log)
+    { _director = director; _log = log; }
 
-    /// <summary>Execute an agent task. Called by n8n workflows via Kong Gateway.</summary>
+    /// <summary>Execute an agent task. Called by n8n via Kong Gateway.</summary>
     [HttpPost("execute")]
-    [ProducesResponseType(typeof(AgentResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Execute(
-        [FromBody] AgentTask task,
-        CancellationToken ct)
+    [ProducesResponseType(typeof(AgentResult), 200)]
+    [ProducesResponseType(400)]
+    public async Task<IActionResult> Execute([FromBody] AgentTask task, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(task.TaskType))
             return BadRequest(new { error = "TaskType is required" });
 
-        _logger.LogInformation("POST /api/agents/execute | TaskId={Id} | Type={T}", task.TaskId, task.TaskType);
+        _log.LogInformation("POST execute | {Id} | {Type}", task.TaskId, task.TaskType);
         var result = await _director.ExecuteAsync(task, ct);
         return Ok(result);
     }
 
-    /// <summary>Get agent status. Used by n8n to poll for async task completion.</summary>
+    /// <summary>Agent readiness check.</summary>
     [HttpGet("status")]
-    public IActionResult Status() => Ok(new {
-        status = "ready",
-        timestamp = DateTime.UtcNow,
-        version = "1.0.0"
-    });
+    public IActionResult Status() =>
+        Ok(new { status = "ready", timestamp = DateTime.UtcNow, version = "1.0.0" });
 }

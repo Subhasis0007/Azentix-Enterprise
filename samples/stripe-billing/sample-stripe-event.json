@@ -1,16 +1,19 @@
 {
   "type": "payment_intent.payment_failed",
-  "id": "evt_test_1234567890",
+  "id": "evt_test_1234567890abcdef",
+  "object": "event",
   "data": {
     "object": {
-      "id": "pi_test_abcdefgh",
+      "id": "pi_test_abcdefgh12345678",
+      "object": "payment_intent",
       "amount": 9999,
       "currency": "gbp",
-      "customer": "cus_test_12345",
+      "customer": "cus_test_12345abcde",
       "last_payment_error": {
         "code": "insufficient_funds",
         "message": "Your card has insufficient funds."
-      }
+      },
+      "status": "requires_payment_method"
     }
   }
 }

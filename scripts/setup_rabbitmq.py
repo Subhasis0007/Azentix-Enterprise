@@ -1,34 +1,36 @@
+#!/usr/bin/env python3
 """
-setup_rabbitmq.py — Creates all CloudAMQP queues programmatically.
-Run once after CloudAMQP account created: python scripts/setup_rabbitmq.py
+setup_rabbitmq.py — Create all CloudAMQP queues.
+Run once after signing up: python3 scripts/setup_rabbitmq.py
 """
-import os, pika
+import os, sys
 from dotenv import load_dotenv
 load_dotenv()
 
 QUEUES = [
-    "sap-price-changes",
-    "servicenow-incidents",
-    "stripe-events",
-    "hubspot-sync",
-    "approval-queue",
-    "notifications",
-    "dead-letter-archive",
+    ("sap-price-changes",    {"x-max-priority": 9}),
+    ("servicenow-incidents", {"x-max-priority": 9}),
+    ("stripe-events",        {"x-max-priority": 9}),
+    ("hubspot-sync",         {}),
+    ("approval-queue",       {"x-max-priority": 9}),
+    ("notifications",        {}),
+    ("dead-letter-archive",  {}),
 ]
 
-def setup():
+def main():
+    import pika
     url = os.getenv("CLOUDAMQP_URL")
     if not url:
-        print("ERROR: CLOUDAMQP_URL not set in .env")
-        return
+        print("ERROR: CLOUDAMQP_URL not set in .env"); sys.exit(1)
+
     print(f"Connecting to CloudAMQP...")
-    conn = pika.BlockingConnection(pika.URLParameters(url))
-    ch = conn.channel()
-    for q in QUEUES:
-        ch.queue_declare(queue=q, durable=True, arguments={"x-max-priority": 9})
-        print(f"  ✅ Created queue: {q}")
+    conn    = pika.BlockingConnection(pika.URLParameters(url))
+    channel = conn.channel()
+    for queue_name, args in QUEUES:
+        channel.queue_declare(queue=queue_name, durable=True, arguments=args or None)
+        print(f"  ✅ {queue_name}")
     conn.close()
-    print(f"\n✅ All {len(QUEUES)} queues created in CloudAMQP.")
+    print(f"\n✅ All {len(QUEUES)} queues created.")
 
 if __name__ == "__main__":
-    setup()
+    main()

@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Azentix.Agents.Director;
 using Azentix.Models;
-using Stripe;
 
 namespace Azentix.AgentHost.Controllers;
 
@@ -10,52 +9,52 @@ namespace Azentix.AgentHost.Controllers;
 public class WebhookController : ControllerBase
 {
     private readonly IDirectorAgent _director;
-    private readonly ILogger<WebhookController> _logger;
-    private readonly IConfiguration _config;
+    private readonly ILogger<WebhookController> _log;
+    private readonly IConfiguration _cfg;
 
-    public WebhookController(IDirectorAgent director, ILogger<WebhookController> logger, IConfiguration config)
-    { _director = director; _logger = logger; _config = config; }
+    public WebhookController(IDirectorAgent director,
+        ILogger<WebhookController> log, IConfiguration cfg)
+    { _director = director; _log = log; _cfg = cfg; }
 
-    /// <summary>Receives Stripe webhook events. Triggers agent for failed payments.</summary>
+    /// <summary>Receives Stripe webhook events. Fires billing-alert agent async.</summary>
     [HttpPost("stripe")]
     public async Task<IActionResult> StripeWebhook()
     {
         var json = await new StreamReader(HttpContext.Request.Body).ReadToEndAsync();
-        var webhookSecret = _config["STRIPE_WEBHOOK_SECRET"];
+        _log.LogInformation("Stripe webhook received ({Len} bytes)", json.Length);
 
-        Event stripeEvent;
-        try
+        // Signature validation
+        var secret = _cfg["STRIPE_WEBHOOK_SECRET"];
+        if (!string.IsNullOrEmpty(secret))
         {
-            stripeEvent = webhookSecret != null
-                ? EventUtility.ConstructEvent(json,
-                    Request.Headers["Stripe-Signature"], webhookSecret)
-                : EventUtility.ParseEvent(json);
+            try
+            {
+                Stripe.EventUtility.ConstructEvent(
+                    json, Request.Headers["Stripe-Signature"], secret);
+            }
+            catch
+            {
+                return BadRequest(new { error = "Invalid Stripe signature" });
+            }
         }
-        catch (StripeException ex)
-        {
-            _logger.LogWarning("Stripe webhook signature validation failed: {Msg}", ex.Message);
-            return BadRequest(new { error = "Invalid signature" });
-        }
 
-        _logger.LogInformation("Stripe webhook: {Type}", stripeEvent.Type);
+        var evt  = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+        var type = evt.TryGetProperty("type", out var t) ? t.GetString() : "unknown";
 
-        if (stripeEvent.Type == "payment_intent.payment_failed" ||
-            stripeEvent.Type == "customer.subscription.deleted")
+        if (type is "payment_intent.payment_failed" or "customer.subscription.deleted")
         {
-            var task = new AgentTask {
+            _ = Task.Run(() => _director.ExecuteAsync(new AgentTask {
                 TaskType    = "stripe-billing-alert",
-                Description = $"Stripe event: {stripeEvent.Type}. Investigate and trigger incident + CRM update.",
+                Description = $"Stripe event {type} received. Investigate and trigger incident.",
                 Priority    = TaskPriority.High,
                 InputData   = new Dictionary<string, object> {
-                    ["stripeEventType"] = stripeEvent.Type,
-                    ["stripeEventId"]   = stripeEvent.Id,
-                    ["stripeObjectId"]  = stripeEvent.Data?.Object?.ToString() ?? ""
+                    ["stripeEventType"] = type ?? "",
+                    ["stripeEventId"]   = evt.TryGetProperty("id", out var id)
+                        ? id.GetString() ?? "" : ""
                 },
-                Context = "Stripe webhook. Check customer, create ServiceNow incident, flag Salesforce opportunity, update HubSpot."
-            };
-            _ = Task.Run(() => _director.ExecuteAsync(task));
+                Context = "Stripe webhook. Create ServiceNow incident, flag Salesforce, update HubSpot."
+            }));
         }
-
-        return Ok(new { received = true });
+        return Ok(new { received = true, type });
     }
 }

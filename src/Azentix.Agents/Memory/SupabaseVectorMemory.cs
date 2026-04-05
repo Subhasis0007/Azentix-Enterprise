@@ -6,59 +6,70 @@ using Azentix.Models;
 
 namespace Azentix.Agents.Memory;
 
+public interface IVectorMemory
+{
+    Task SaveAsync(string collection, string id, string content,
+        float[] embedding, string metadata = "{}", CancellationToken ct = default);
+    Task<List<MemoryResult>> SearchAsync(string collection, float[] queryEmbedding,
+        int topK = 5, double minRelevance = 0.7, CancellationToken ct = default);
+    Task DeleteWorkingMemoryAsync(string agentId, CancellationToken ct = default);
+}
+
+public record MemoryResult(string Id, string Text, string Source, double Relevance);
+
 public class SupabaseVectorMemory : IVectorMemory
 {
-    private readonly string _conn;
+    private readonly string _connectionString;
     private readonly ILogger<SupabaseVectorMemory> _logger;
 
-    public SupabaseVectorMemory(SupabaseConfig config, ILogger<SupabaseVectorMemory> logger)
-    { _conn = config.DatabaseConnectionString; _logger = logger; }
+    public SupabaseVectorMemory(SupabaseConfig cfg, ILogger<SupabaseVectorMemory> logger)
+    { _connectionString = cfg.DatabaseConnectionString; _logger = logger; }
 
-    public async Task SaveAsync(string collection, string id, string text,
-        string description, float[] embedding, string metadata = "{}",
+    public async Task SaveAsync(string collection, string id, string content,
+        float[] embedding, string metadata = "{}", CancellationToken ct = default)
+    {
+        await using var conn = await OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(@"
+            INSERT INTO agent_memory (id,content,embedding,collection,metadata,stored_at)
+            VALUES (@id,@c,@e,@col,@m::jsonb,NOW())
+            ON CONFLICT(id) DO UPDATE
+              SET content=EXCLUDED.content, embedding=EXCLUDED.embedding, stored_at=NOW()", conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("c",  content);
+        cmd.Parameters.AddWithValue("e",  new Vector(embedding));
+        cmd.Parameters.AddWithValue("col",collection);
+        cmd.Parameters.AddWithValue("m",  metadata);
+        await cmd.ExecuteNonQueryAsync(ct);
+        _logger.LogDebug("Saved {Id} to collection {Col}", id, collection);
+    }
+
+    public async Task<List<MemoryResult>> SearchAsync(string collection,
+        float[] queryEmbedding, int topK = 5, double minRelevance = 0.7,
         CancellationToken ct = default)
     {
         await using var conn = await OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(
-            "INSERT INTO agent_memory (id,content,summary,embedding,collection,metadata,stored_at) " +
-            "VALUES (@id,@content,@summary,@embedding,@collection,@metadata::jsonb,NOW()) " +
-            "ON CONFLICT(id) DO UPDATE SET content=EXCLUDED.content,embedding=EXCLUDED.embedding,stored_at=NOW()", conn);
-        cmd.Parameters.AddWithValue("id", id);
-        cmd.Parameters.AddWithValue("content", text);
-        cmd.Parameters.AddWithValue("summary", description);
-        cmd.Parameters.AddWithValue("embedding", new Vector(embedding));
-        cmd.Parameters.AddWithValue("collection", collection);
-        cmd.Parameters.AddWithValue("metadata", metadata);
-        await cmd.ExecuteNonQueryAsync(ct);
-        _logger.LogDebug("Saved to Supabase: {Id} -> {Col}", id, collection);
-    }
-
-    public async Task<List<MemorySearchResult>> SearchAsync(
-        string collection, float[] queryEmbedding,
-        int topK = 5, double minRelevance = 0.7, CancellationToken ct = default)
-    {
-        await using var conn = await OpenAsync(ct);
-        await using var cmd = new NpgsqlCommand(
-            "SELECT id,content,summary,source, 1-(embedding<=>@q) AS sim " +
-            "FROM agent_memory WHERE collection=@col " +
-            "AND 1-(embedding<=>@q)>=@min ORDER BY embedding<=>@q LIMIT @k", conn);
-        cmd.Parameters.AddWithValue("q", new Vector(queryEmbedding));
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT id, content, COALESCE(source,''), 1-(embedding<=>@q) AS sim
+            FROM   agent_memory
+            WHERE  collection = @col
+            AND    1-(embedding<=>@q) >= @min
+            ORDER  BY embedding <=> @q
+            LIMIT  @k", conn);
+        cmd.Parameters.AddWithValue("q",   new Vector(queryEmbedding));
         cmd.Parameters.AddWithValue("col", collection);
         cmd.Parameters.AddWithValue("min", minRelevance);
-        cmd.Parameters.AddWithValue("k", topK);
-        var results = new List<MemorySearchResult>();
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            results.Add(new MemorySearchResult {
-                Id = r.GetString(0), Text = r.GetString(1),
-                Description = r.IsDBNull(2) ? "" : r.GetString(2),
-                Source = r.IsDBNull(3) ? "" : r.GetString(3),
-                Relevance = r.GetDouble(4) });
-        _logger.LogDebug("Supabase search: {N} results in {Col}", results.Count, collection);
+        cmd.Parameters.AddWithValue("k",   topK);
+        var results = new List<MemoryResult>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            results.Add(new MemoryResult(
+                reader.GetString(0), reader.GetString(1),
+                reader.GetString(2), reader.GetDouble(3)));
+        _logger.LogDebug("Search in {Col}: {N} results", collection, results.Count);
         return results;
     }
 
-    public async Task ClearWorkingMemoryAsync(string agentId, CancellationToken ct = default)
+    public async Task DeleteWorkingMemoryAsync(string agentId, CancellationToken ct = default)
     {
         await using var conn = await OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
@@ -69,9 +80,9 @@ public class SupabaseVectorMemory : IVectorMemory
 
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken ct)
     {
-        var c = new NpgsqlConnection(_conn);
-        c.TypeMapper.UseVector();
-        await c.OpenAsync(ct);
-        return c;
+        var conn = new NpgsqlConnection(_connectionString);
+        conn.TypeMapper.UseVector();
+        await conn.OpenAsync(ct);
+        return conn;
     }
 }

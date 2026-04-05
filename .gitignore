@@ -1,46 +1,18 @@
-# Environment files — NEVER commit .env
 .env
 .env.local
-.env.*.local
-
-# .NET
 bin/
 obj/
 *.user
-*.suo
 .vs/
-*.nupkg
-*.snupkg
 coverage/
 TestResults/
-*.trx
-
-# Python
 __pycache__/
 *.pyc
-*.pyo
 .pytest_cache/
 *.egg-info/
-dist/
-build/
 venv/
 .venv/
-*.log
-
-# Node / n8n
 node_modules/
-
-# Docker
-.docker/
-
-# IDE
-.idea/
-.vscode/settings.json
 *.DS_Store
-Thumbs.db
-
-# Secrets
 *.pem
 *.key
-*.pfx
-doppler.yaml

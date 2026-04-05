@@ -10,7 +10,7 @@ metrics:
         username: ${GRAFANA_PROMETHEUS_USER}
         password: ${GRAFANA_API_KEY}
   configs:
-    - name: default
+    - name: azentix
       scrape_configs:
         - job_name: kong
           static_configs:
@@ -22,9 +22,9 @@ metrics:
           metrics_path: /metrics
 
 logs:
-  positions_directory: /tmp/positions
+  positions_directory: /tmp/grafana-agent-positions
   configs:
-    - name: default
+    - name: azentix
       clients:
         - url: ${GRAFANA_LOKI_URL}
           basic_auth:
@@ -32,17 +32,17 @@ logs:
             password: ${GRAFANA_API_KEY}
           external_labels:
             app: azentix
-            environment: dev
+            env: dev
       scrape_configs:
         - job_name: azentix-app
           static_configs:
             - targets: [localhost]
               labels:
-                job: azentix-agent-host
+                job:    azentix-agent-host
                 __path__: /var/log/azentix/*.log
-        - job_name: kong-access
+        - job_name: kong
           static_configs:
             - targets: [localhost]
               labels:
-                job: kong-gateway
+                job:    kong-gateway
                 __path__: /var/log/kong/*.log

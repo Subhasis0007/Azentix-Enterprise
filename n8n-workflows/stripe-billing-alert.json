@@ -1,32 +1,31 @@
 {
-  "name": "Azentix Stripe Billing Alert",
+  "name": "Azentix — Stripe Billing Alert",
+  "active": false,
   "nodes": [
     {
-      "parameters": { "httpMethod": "POST", "path": "stripe-events", "responseMode": "onReceived" },
-      "name": "Stripe Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [200, 300],
-      "webhookId": "stripe-billing-webhook"
+      "parameters": { "httpMethod": "POST", "path": "stripe-events", "responseMode": "onReceived", "responseData": "allEntries" },
+      "name": "1_Stripe_Webhook", "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1, "position": [200, 300],
+      "webhookId": "azentix-stripe-webhook"
     },
     {
       "parameters": {
-        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute", "method": "POST",
+        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute",
+        "method": "POST",
         "sendHeaders": true,
         "headerParameters": { "parameters": [
           { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-API-Key", "value": "={{ $env.KONG_API_KEY_AZENTIX }}" }
+          { "name": "X-API-Key",   "value": "={{ $env.KONG_API_KEY_AZENTIX }}" }
         ]},
-        "sendBody": true,
-        "bodyParameters": { "parameters": [
-          { "name": "taskType", "value": "stripe-billing-alert" },
-          { "name": "priority", "value": "High" },
-          { "name": "description", "value": "=Handle Stripe event: {{ $json.body.type }}" },
-          { "name": "inputData", "value": "={{ JSON.stringify({ stripeEventType: $json.body.type, stripeEventId: $json.body.id }) }}" }
-        ]},
+        "sendBody": true, "contentType": "raw", "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ taskType: 'stripe-billing-alert', priority: 'High', description: 'Handle Stripe event: ' + $json.body.type, inputData: { stripeEventType: $json.body.type, stripeEventId: $json.body.id }, context: 'Create ServiceNow incident, flag Salesforce opportunity, update HubSpot contact.' }) }}",
         "options": { "timeout": 120000 }
       },
-      "name": "Billing Alert Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [440, 300]
+      "name": "2_Billing_Agent", "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4, "position": [440, 300]
     }
   ],
   "connections": {
-    "Stripe Webhook": { "main": [[{ "node": "Billing Alert Agent", "type": "main", "index": 0 }]] }
+    "1_Stripe_Webhook": { "main": [[{ "node": "2_Billing_Agent", "type": "main", "index": 0 }]] }
   }
 }
