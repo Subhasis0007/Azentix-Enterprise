@@ -1,0 +1,32 @@
+{
+  "name": "Azentix Stripe Billing Alert",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "stripe-events", "responseMode": "onReceived" },
+      "name": "Stripe Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [200, 300],
+      "webhookId": "stripe-billing-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute", "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-API-Key", "value": "={{ $env.KONG_API_KEY_AZENTIX }}" }
+        ]},
+        "sendBody": true,
+        "bodyParameters": { "parameters": [
+          { "name": "taskType", "value": "stripe-billing-alert" },
+          { "name": "priority", "value": "High" },
+          { "name": "description", "value": "=Handle Stripe event: {{ $json.body.type }}" },
+          { "name": "inputData", "value": "={{ JSON.stringify({ stripeEventType: $json.body.type, stripeEventId: $json.body.id }) }}" }
+        ]},
+        "options": { "timeout": 120000 }
+      },
+      "name": "Billing Alert Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [440, 300]
+    }
+  ],
+  "connections": {
+    "Stripe Webhook": { "main": [[{ "node": "Billing Alert Agent", "type": "main", "index": 0 }]] }
+  }
+}

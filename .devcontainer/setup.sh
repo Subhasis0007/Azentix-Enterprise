@@ -1,30 +1,22 @@
 #!/bin/bash
 set -e
 echo "Setting up Azentix development environment..."
+
 # Install Python dependencies
 pip install --upgrade pip
-pip install langgraph langchain lanchain-openai \
-    supabse vecs psycogs2-binary \
-    pika aio-pika \
-    opentelemetry-sdk opentelemetry-exporter-otlp \
-    python-dotenv pytest pytest-asyncio httpx openai requests
+pip install langgraph==0.2.28 langchain==0.3.7 langchain-openai==0.2.7 \
+  openai==1.54.0 supabase==2.9.1 vecs==0.4.3 psycopg2-binary==2.9.10 \
+  simple-salesforce==1.12.6 hubspot-api-client==9.0.0 stripe==11.1.0 \
+  pika==1.3.2 aio-pika python-dotenv==1.0.1 \
+  pytest==8.3.3 pytest-asyncio==0.24.0 httpx requests==2.32.3 \
+  opentelemetry-sdk opentelemetry-exporter-otlp
 
-# Install .Net global tools 
+# Install .NET global tools
 dotnet tool install --global dotnet-ef 2>/dev/null || true
 
-# Install Azure CLI (for Azure OpenAI only)
-az bicep install 2>/dev/null || true
-
-# Install Kong CLI (deck)
+# Install deck (Kong config tool)
 curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz | tar -xz
 sudo mv deck /usr/local/bin/ 2>/dev/null || mv deck ~/.local/bin/ 2>/dev/null || true
-
-# Install Stripe CLI 
-curl -s https://packages.stripe.dev/api/security/keypair/stripe-cli-gpg/public | \
-  gpg --dearmor | sudo tee /usr/share/keyrings/stripe.gpg > /dev/null 2>&1 || true
-echo "deb [signed-by=/usr/share/keyrings/stripe.gpg] https://packages.stripe.dev/stripe-cli-desbian-local stable main" | \
-  sudo tee /etc/apt/sources.list.d/stripe.list > /dev/null 2>&1 || true
-sudo apt-get update -q && sudo apt-get install stripe -y 2>/dev/null || echo "Stripe CLI install skipped"
 
 # Install Doppler CLI
 curl -Ls https://cli.doppler.com/install.sh | sh 2>/dev/null || echo "Doppler CLI install skipped"
@@ -32,5 +24,5 @@ curl -Ls https://cli.doppler.com/install.sh | sh 2>/dev/null || echo "Doppler CL
 echo ""
 echo "Azentix environment ready!"
 echo "Run: dotnet build src/Azentix.sln"
-echo "Run: python -c 'import supabase; print(supabase.__version__)'"
-echo "Run: doppler login  (to connect secrets manager)"
+echo "Run: python -c 'import langgraph; print(langgraph.__version__)'"
+echo "Run: doppler login"

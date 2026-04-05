@@ -1,0 +1,8 @@
+{
+  "incidentNumber": "INC0001234",
+  "shortDescription": "SAP OData API returning 503 errors for product master calls",
+  "priority": "2",
+  "category": "sap",
+  "affectedSystem": "SAP S/4HANA",
+  "reportedBy": "integration_monitor"
+}

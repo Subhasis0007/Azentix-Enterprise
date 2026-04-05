@@ -1,0 +1,101 @@
+{
+  "name": "Azentix SAP Price Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "sap-price-changes",
+        "options": { "contentIsJson": true }
+      },
+      "name": "RabbitMQ Trigger",
+      "type": "n8n-nodes-base.rabbitMq",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.KONG_PROXY_URL }}/azentix/v1/agents/execute",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-API-Key", "value": "={{ $env.KONG_API_KEY_AZENTIX }}" },
+            { "name": "X-Correlation-Id", "value": "={{ $now.toMillis() }}-{{ $json.sapMaterialNumber }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "taskType", "value": "sap-salesforce-price-sync" },
+            { "name": "taskId", "value": "={{ $now.toMillis() }}-sync" },
+            { "name": "priority", "value": "High" },
+            { "name": "description", "value": "=Sync SAP price for {{ $json.sapMaterialNumber }}" },
+            { "name": "inputData", "value": "={{ JSON.stringify({ sapMaterialNumber: $json.sapMaterialNumber, salesforceProductId: $json.salesforceProductId, triggeredBy: 'sap_change_event' }) }}" },
+            { "name": "context", "value": "SAP is source of truth. Sync to Salesforce Standard Pricebook." }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "name": "Call Azentix Agent via Kong",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "string": [{ "value1": "={{ $json.status }}", "operation": "equals", "value2": "Completed" }] }, "renameOutput": true, "outputKey": "completed" },
+            { "conditions": { "string": [{ "value1": "={{ $json.status }}", "operation": "equals", "value2": "HumanReviewRequired" }] }, "renameOutput": true, "outputKey": "needsApproval" },
+            { "conditions": { "string": [{ "value1": "={{ $json.status }}", "operation": "equals", "value2": "Failed" }] }, "renameOutput": true, "outputKey": "failed" }
+          ]
+        }
+      },
+      "name": "Route by Agent Status",
+      "type": "n8n-nodes-base.switch",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "queue": "notifications",
+        "message": "={{ JSON.stringify({ type: 'price_sync_complete', material: $('RabbitMQ Trigger').item.json.sapMaterialNumber, status: 'synced', timestamp: $now.toISO() }) }}"
+      },
+      "name": "Publish Success Notification",
+      "type": "n8n-nodes-base.rabbitMq",
+      "position": [920, 200],
+      "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
+    },
+    {
+      "parameters": {
+        "queue": "approval-queue",
+        "message": "={{ JSON.stringify({ type: 'price_approval_needed', material: $('RabbitMQ Trigger').item.json.sapMaterialNumber, agentResult: $json, timestamp: $now.toISO() }) }}"
+      },
+      "name": "Send to Approval Queue",
+      "type": "n8n-nodes-base.rabbitMq",
+      "position": [920, 300],
+      "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
+    },
+    {
+      "parameters": {
+        "queue": "dead-letter-archive",
+        "message": "={{ JSON.stringify({ type: 'price_sync_failed', material: $('RabbitMQ Trigger').item.json.sapMaterialNumber, error: $json.errorMessage, timestamp: $now.toISO() }) }}"
+      },
+      "name": "Archive Failed Sync",
+      "type": "n8n-nodes-base.rabbitMq",
+      "position": [920, 400],
+      "credentials": { "rabbitmq": { "id": "1", "name": "CloudAMQP" } }
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger": { "main": [[{ "node": "Call Azentix Agent via Kong", "type": "main", "index": 0 }]] },
+    "Call Azentix Agent via Kong": { "main": [[{ "node": "Route by Agent Status", "type": "main", "index": 0 }]] },
+    "Route by Agent Status": {
+      "main": [
+        [{ "node": "Publish Success Notification", "type": "main", "index": 0 }],
+        [{ "node": "Send to Approval Queue", "type": "main", "index": 0 }],
+        [{ "node": "Archive Failed Sync", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}

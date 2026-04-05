@@ -1,0 +1,118 @@
+name: Azentix CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build-dotnet:
+    name: Build and Test .NET
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore NuGet packages
+        run: dotnet restore src/Azentix.sln
+      - name: Build solution
+        run: dotnet build src/Azentix.sln --no-restore --configuration Release
+      - name: Run unit tests
+        run: |
+          dotnet test src/Azentix.sln --no-build --configuration Release \
+            --filter "Category=Unit" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage \
+            --logger "trx;LogFileName=test-results.trx"
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          directory: ./coverage
+          flags: dotnet
+
+  test-python:
+    name: Test Python LangGraph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r src/langgraph/requirements.txt
+      - name: Run Python tests (unit only)
+        run: python -m pytest tests/python/ -v -m "not integration" --tb=short
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          SUPABASE_DB_CONNECTION: ${{ secrets.SUPABASE_DB_CONNECTION }}
+          CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
+          SAP_API_KEY: ${{ secrets.SAP_API_KEY }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SERVICENOW_INSTANCE_URL: ${{ secrets.SERVICENOW_INSTANCE_URL }}
+          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+
+  validate-kong:
+    name: Validate Kong Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deck
+        run: |
+          curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz | tar -xz
+          sudo mv deck /usr/local/bin/
+      - name: Validate kong.yml syntax
+        run: deck validate --state kong/kong.yml
+
+  docker-build:
+    name: Validate Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -f src/Azentix.AgentHost/Dockerfile src/ -t azentix-test
+      - name: Smoke test container starts
+        run: |
+          docker run -d --name test-container -p 5001:5000 \
+            -e ASPNETCORE_URLS="http://+:5000" \
+            -e AZURE_OPENAI_ENDPOINT="https://placeholder.openai.azure.com/" \
+            -e AZURE_OPENAI_API_KEY="placeholder" \
+            -e SUPABASE_URL="https://placeholder.supabase.co" \
+            -e SUPABASE_ANON_KEY="placeholder" \
+            -e SUPABASE_SERVICE_KEY="placeholder" \
+            -e SUPABASE_DB_CONNECTION="Host=placeholder" \
+            -e CLOUDAMQP_URL="amqp://guest:guest@localhost//" \
+            azentix-test
+          sleep 15
+          docker logs test-container 2>&1 | tail -20
+          docker stop test-container
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check .env not committed
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "ERROR: .env file is committed! Remove it immediately."
+            exit 1
+          fi
+          echo ".env is not committed. Good."
+      - name: Scan for secrets (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: "./"
+          head: HEAD
+        continue-on-error: true
