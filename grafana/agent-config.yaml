@@ -1,0 +1,48 @@
+server:
+  log_level: info
+
+metrics:
+  global:
+    scrape_interval: 15s
+  remote_write:
+    - url: ${GRAFANA_PROMETHEUS_URL}/api/prom/push
+      basic_auth:
+        username: ${GRAFANA_PROMETHEUS_USER}
+        password: ${GRAFANA_API_KEY}
+  configs:
+    - name: default
+      scrape_configs:
+        - job_name: kong
+          static_configs:
+            - targets: ['kong:8001']
+          metrics_path: /metrics
+        - job_name: n8n
+          static_configs:
+            - targets: ['n8n:5678']
+          metrics_path: /metrics
+
+logs:
+  positions_directory: /tmp/positions
+  configs:
+    - name: default
+      clients:
+        - url: ${GRAFANA_LOKI_URL}
+          basic_auth:
+            username: ${GRAFANA_LOKI_USER}
+            password: ${GRAFANA_API_KEY}
+          external_labels:
+            app: azentix
+            environment: dev
+      scrape_configs:
+        - job_name: azentix-app
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: azentix-agent-host
+                __path__: /var/log/azentix/*.log
+        - job_name: kong-access
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: kong-gateway
+                __path__: /var/log/kong/*.log

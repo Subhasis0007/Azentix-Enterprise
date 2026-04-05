@@ -1,0 +1,12 @@
+{
+  "sapMaterialNumber": "MAT-001234",
+  "salesforceProductId": "01t5e000003K9XAAA0",
+  "triggeredBy": "sap_change_event",
+  "tenantId": "acme-corp",
+  "oldPrice": 234.50,
+  "newPrice": 249.99,
+  "currency": "GBP",
+  "salesOrg": "GB01",
+  "validityStart": "2024-11-01",
+  "changedBy": "SAP_BATCH_JOB"
+}
