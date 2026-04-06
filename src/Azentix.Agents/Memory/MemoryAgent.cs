@@ -1,15 +1,7 @@
+
 using Microsoft.Extensions.Logging;
 
 namespace Azentix.Agents.Memory;
-
-public interface IMemoryAgent
-{
-    Task StoreAsync(string collection, string key, string content,
-        float[] embedding, CancellationToken ct = default);
-    Task<List<MemoryResult>> RecallAsync(string collection,
-        float[] queryEmbedding, int topK = 5, CancellationToken ct = default);
-    Task ClearSessionAsync(string agentId, CancellationToken ct = default);
-}
 
 public class MemoryAgent : IMemoryAgent
 {
@@ -17,16 +9,28 @@ public class MemoryAgent : IMemoryAgent
     private readonly ILogger<MemoryAgent> _log;
 
     public MemoryAgent(IVectorMemory store, ILogger<MemoryAgent> log)
-    { _store = store; _log = log; }
-
-    public Task StoreAsync(string collection, string key, string content,
-        float[] embedding, CancellationToken ct = default)
     {
-        _log.LogDebug("Store: {Key} -> {Col}", key, collection);
-        return _store.SaveAsync(collection, key, content, embedding, "{}", ct);
+        _store = store;
+        _log = log;
     }
 
-    public Task<List<MemoryResult>> RecallAsync(string collection,
+    public Task StoreAsync(string collection, string key, string content,
+        string description, float[] embedding, CancellationToken ct = default)
+    {
+        _log.LogDebug("Store: {Key} -> {Col}", key, collection);
+
+        return _store.SaveAsync(
+            collection,
+            key,
+            content,
+            description,
+            embedding,
+            "{}",
+            ct
+        );
+    }
+
+    public Task<List<MemorySearchResult>> RecallAsync(string collection,
         float[] queryEmbedding, int topK = 5, CancellationToken ct = default)
     {
         _log.LogDebug("Recall: {Col} top{N}", collection, topK);
@@ -34,5 +38,5 @@ public class MemoryAgent : IMemoryAgent
     }
 
     public Task ClearSessionAsync(string agentId, CancellationToken ct = default)
-        => _store.DeleteWorkingMemoryAsync(agentId, ct);
+        => _store.ClearWorkingMemoryAsync(agentId, ct);
 }

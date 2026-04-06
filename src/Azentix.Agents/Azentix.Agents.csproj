@@ -1,12 +1,18 @@
+
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- ✅ Fix: Suppress Semantic Kernel experimental warnings -->
+    <NoWarn>SKEXP0001</NoWarn>
   </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Azentix.Models\Azentix.Models.csproj" />
   </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.SemanticKernel" Version="1.21.0" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.21.0" />
@@ -20,4 +26,5 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.9.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
   </ItemGroup>
+
 </Project>
