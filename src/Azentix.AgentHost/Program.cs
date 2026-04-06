@@ -8,6 +8,7 @@ using Azentix.Agents.Memory;
 using Azentix.Agents.Action;
 using Azentix.Agents.Plugins;
 using Azentix.Models;
+using OpenTelemetry.Instrumentation.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 var cfg     = builder.Configuration;
