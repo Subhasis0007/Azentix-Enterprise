@@ -86,8 +86,14 @@ jobs:
 
       - name: Install deck
         run: |
-          curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz \
-            | tar -xz && sudo mv deck /usr/local/bin/
+          curl -sL -f -o deck.tar.gz https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz
+          if [ ! -f deck.tar.gz ] || [ ! -s deck.tar.gz ]; then
+            echo "ERROR: Failed to download deck or file is empty"
+            exit 1
+          fi
+          tar -xzf deck.tar.gz
+          sudo mv deck /usr/local/bin/
+          rm deck.tar.gz
 
       - name: Validate kong.yml
         run: deck validate --state kong/kong.yml
