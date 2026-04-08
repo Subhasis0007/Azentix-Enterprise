@@ -1,4 +1,3 @@
-
 name: Azentix CI
 
 on:
@@ -11,7 +10,6 @@ on:
 env:
   DOTNET_VERSION: "8.0.x"
   PYTHON_VERSION: "3.11"
-  DECK_VERSION: "1.57.0" # pin for stability; change if you want newer
 
 jobs:
   # ── .NET build + unit tests ──────────────────────────────────────────
@@ -65,16 +63,16 @@ jobs:
       - name: Run tests (no integration)
         run: python3 scripts/test_flows.py
         env:
-          AZURE_OPENAI_ENDPOINT:     ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY:      ${{ secrets.AZURE_OPENAI_API_KEY }}
-          SUPABASE_DB_CONNECTION:    ${{ secrets.SUPABASE_DB_CONNECTION }}
-          CLOUDAMQP_URL:             ${{ secrets.CLOUDAMQP_URL }}
-          SAP_API_KEY:               ${{ secrets.SAP_API_KEY }}
-          SALESFORCE_CLIENT_ID:      ${{ secrets.SALESFORCE_CLIENT_ID }}
-          SALESFORCE_CLIENT_SECRET:  ${{ secrets.SALESFORCE_CLIENT_SECRET }}
-          SERVICENOW_INSTANCE_URL:   ${{ secrets.SERVICENOW_INSTANCE_URL }}
-          HUBSPOT_ACCESS_TOKEN:      ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-          STRIPE_SECRET_KEY:         ${{ secrets.STRIPE_SECRET_KEY }}
+          AZURE_OPENAI_ENDPOINT:    ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY:     ${{ secrets.AZURE_OPENAI_API_KEY }}
+          SUPABASE_DB_CONNECTION:   ${{ secrets.SUPABASE_DB_CONNECTION }}
+          CLOUDAMQP_URL:            ${{ secrets.CLOUDAMQP_URL }}
+          SAP_API_KEY:              ${{ secrets.SAP_API_KEY }}
+          SALESFORCE_CLIENT_ID:     ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SERVICENOW_INSTANCE_URL:  ${{ secrets.SERVICENOW_INSTANCE_URL }}
+          HUBSPOT_ACCESS_TOKEN:     ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY:        ${{ secrets.STRIPE_SECRET_KEY }}
 
       - name: Run offline demo
         run: python3 scripts/demo_offline.py
@@ -86,11 +84,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # FIX: Use Kong's supported setup action instead of fragile curl latest URL
-      - name: Setup decK
-        uses: Kong/setup-deck@v1
-        with:
-          deck-version: ${{ env.DECK_VERSION }}
+      - name: Install deck
+        run: |
+          curl -sL -f -o deck.tar.gz https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz
+          if [ ! -f deck.tar.gz ] || [ ! -s deck.tar.gz ]; then
+            echo "ERROR: Failed to download deck or file is empty"
+            exit 1
+          fi
+          tar -xzf deck.tar.gz
+          sudo mv deck /usr/local/bin/
+          rm deck.tar.gz
 
       - name: Validate kong.yml
         run: deck validate --state kong/kong.yml
@@ -143,4 +146,3 @@ jobs:
           path: "./"
           head: HEAD
         continue-on-error: true
-``
