@@ -1,0 +1,83 @@
+name: Azentix Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Render.com
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger Render deploy
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":false}')
+          echo "Render API responded: $RESPONSE"
+          [ "$RESPONSE" = "201" ] || [ "$RESPONSE" = "200" ] || { echo "Deploy trigger failed: $RESPONSE"; exit 1; }
+        env:
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RENDER_API_KEY:    ${{ secrets.RENDER_API_KEY }}
+
+      - name: Wait for deploy + health check
+        run: |
+          echo "Waiting 90 seconds for Render to deploy..."
+          sleep 90
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://azentix-agent-host.onrender.com/health)
+          echo "Health check: HTTP $STATUS"
+          [ "$STATUS" = "200" ] || { echo "Health check FAILED — check Render logs"; exit 1; }
+          echo "Deployment successful!"
+
+      - name: Apply Kong configuration
+        run: |
+          curl -sL https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz \
+            | tar -xz && sudo mv deck /usr/local/bin/
+          # Apply to production Kong if KONG_ADMIN_URL is set
+          if [ -n "$KONG_ADMIN_URL" ]; then
+            deck sync --kong-addr "$KONG_ADMIN_URL" --state kong/kong.yml
+          else
+            echo "KONG_ADMIN_URL not set — skipping Kong sync"
+          fi
+        env:
+          KONG_ADMIN_URL: ${{ secrets.KONG_ADMIN_URL }}
+
+      - name: Publish deployment notification
+        run: |
+          python3 -c "
+          import os, json, pika
+          url = os.environ.get('CLOUDAMQP_URL','')
+          if not url: print('CLOUDAMQP_URL not set — skipping notification'); exit()
+          conn = pika.BlockingConnection(pika.URLParameters(url))
+          ch   = conn.channel()
+          ch.queue_declare(queue='notifications', durable=True)
+          ch.basic_publish('','notifications',
+              json.dumps({'type':'deployment_complete',
+                          'env':'${{ github.event.inputs.environment || \"dev\" }}',
+                          'commit':'${{ github.sha }}'[:7],
+                          'actor':'${{ github.actor }}'}).encode(),
+              pika.BasicProperties(delivery_mode=2))
+          conn.close()
+          print('Deployment notification published')
+          "
+        env:
+          CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
