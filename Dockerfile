@@ -33,8 +33,7 @@ COPY --from=build /app/publish .
 ENV PORT=5000
 ENV ASPNETCORE_URLS=http://+:${PORT}
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 CMD curl -f http://localhost:${PORT}/health || exit 1
 
 EXPOSE ${PORT}
 ENTRYPOINT ["dotnet", "Azentix.AgentHost.dll"]
