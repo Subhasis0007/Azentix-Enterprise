@@ -1,8 +1,11 @@
+
 name: Azentix Deploy
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   workflow_dispatch:
     inputs:
       environment:
@@ -10,7 +13,10 @@ on:
         required: true
         default: dev
         type: choice
-        options: [dev, staging, prod]
+        options:
+          - dev
+          - staging
+          - prod
 
 permissions:
   contents: read
@@ -20,87 +26,99 @@ jobs:
     name: Deploy to Render.com
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    env:
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+      CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
 
-      - name: Trigger Render.com deploy
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trigger Render deployment
         run: |
-          if [ -z "${{ secrets.RENDER_SERVICE_ID }}" ] || [ -z "${{ secrets.RENDER_API_KEY }}" ]; then
-            echo "⚠️  RENDER_SERVICE_ID or RENDER_API_KEY not set — skipping deploy trigger."
-            echo "Add these secrets to GitHub to enable automatic Render deploys."
+          if [ -z "$RENDER_SERVICE_ID" ] || [ -z "$RENDER_API_KEY" ]; then
+            echo "⚠️  Render secrets not configured — skipping deploy trigger."
             exit 0
           fi
 
+          echo "🚀 Triggering Render deploy..."
           RESPONSE=$(curl -s -o /tmp/render_response.json -w "%{http_code}" \
-            -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -X POST "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":false}')
 
-          echo "Render API status: $RESPONSE"
           cat /tmp/render_response.json
 
-          if [ "$RESPONSE" = "201" ] || [ "$RESPONSE" = "200" ]; then
-            echo "✅ Deploy triggered successfully"
+          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
+            echo "✅ Render deploy triggered successfully"
           else
-            echo "❌ Deploy trigger failed with HTTP $RESPONSE"
+            echo "❌ Render deploy failed (HTTP $RESPONSE)"
             exit 1
           fi
 
-      - name: Wait for deploy and health check
+      - name: Wait for deployment and run health check
         run: |
-          if [ -z "${{ secrets.RENDER_SERVICE_ID }}" ]; then
-            echo "Skipping health check — no Render secrets configured."
+          if [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "Skipping health check — Render not configured"
             exit 0
           fi
 
-          echo "Waiting 90 seconds for Render to build and start..."
+          echo "⏳ Waiting 90 seconds for service startup..."
           sleep 90
 
-          RENDER_APP_URL="${{ secrets.RENDER_APP_URL }}"
-          if [ -z "$RENDER_APP_URL" ]; then
-            RENDER_APP_URL="https://azentix-agent-host.onrender.com"
-          fi
+          APP_URL="${RENDER_APP_URL:-https://azentix-agent-host.onrender.com}"
+          echo "Checking health at $APP_URL/health"
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${RENDER_APP_URL}/health")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/health")
           echo "Health check HTTP status: $STATUS"
 
           if [ "$STATUS" = "200" ]; then
-            echo "✅ Deployment successful — service is healthy"
+            echo "✅ Service is healthy"
           elif [ "$STATUS" = "503" ]; then
-            echo "⚠️  Service responded 503 — degraded but alive (check credentials in Render)"
+            echo "⚠️  Service responded 503 — degraded but running"
           else
-            echo "❌ Health check failed — HTTP $STATUS"
-            echo "Check Render logs at https://dashboard.render.com"
+            echo "❌ Health check failed"
             exit 1
           fi
 
-      - name: Publish deployment notification
-        if: ${{ secrets.CLOUDAMQP_URL != '' }}
+      - name: Publish deployment notification (RabbitMQ)
+        if: env.CLOUDAMQP_URL != ''
         run: |
           pip install pika --quiet
-          python3 - << 'PYEOF'
+
+          python3 <<'PYEOF'
           import os, json, pika
+
           url = os.environ.get("CLOUDAMQP_URL", "")
-          if not url or "placeholder" in url:
-              print("CLOUDAMQP_URL not set — skipping notification")
+          if not url:
+              print("RabbitMQ URL missing — skipping notification")
               exit(0)
+
           try:
-              conn = pika.BlockingConnection(pika.URLParameters(url))
-              ch   = conn.channel()
-              ch.queue_declare(queue="notifications", durable=True)
-              ch.basic_publish("", "notifications",
-                  json.dumps({
-                      "type":   "deployment_complete",
-                      "env":    "${{ github.event.inputs.environment || 'dev' }}",
-                      "commit": "${{ github.sha }}"[:7],
-                      "actor":  "${{ github.actor }}"
-                  }).encode(),
-                  pika.BasicProperties(delivery_mode=2))
-              conn.close()
+              connection = pika.BlockingConnection(pika.URLParameters(url))
+              channel = connection.channel()
+              channel.queue_declare(queue="notifications", durable=True)
+
+              payload = {
+                  "type": "deployment_complete",
+                  "environment": "${{ github.event.inputs.environment || 'dev' }}",
+                  "commit": "${{ github.sha }}"[:7],
+                  "actor": "${{ github.actor }}"
+              }
+
+              channel.basic_publish(
+                  exchange="",
+                  routing_key="notifications",
+                  body=json.dumps(payload),
+                  properties=pika.BasicProperties(delivery_mode=2)
+              )
+
+              connection.close()
               print("✅ Deployment notification published")
+
           except Exception as e:
-              print(f"RabbitMQ notification skipped: {e}")
+              print(f"⚠️ RabbitMQ notification skipped: {e}")
           PYEOF
-        env:
-          CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
