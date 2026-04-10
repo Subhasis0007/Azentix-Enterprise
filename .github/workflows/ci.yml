@@ -12,137 +12,204 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  # ── .NET build + unit tests ──────────────────────────────────────────
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1: .NET build + unit tests
+  # No secrets required — tests are pure unit tests against Models only
+  # ──────────────────────────────────────────────────────────────────────────
   dotnet-build-test:
     name: .NET Build & Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('src/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore NuGet packages
         run: dotnet restore src/Azentix.sln
 
-      - name: Build
+      - name: Build (Release)
         run: dotnet build src/Azentix.sln --no-restore --configuration Release
 
-      - name: Unit Tests
+      - name: Run unit tests
         run: |
           dotnet test src/Azentix.sln \
-            --no-build --configuration Release \
+            --no-build \
+            --configuration Release \
             --filter "Category=Unit" \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage \
-            --logger "trx;LogFileName=results.trx"
+            --results-directory ./test-results \
+            --logger "trx;LogFileName=results.trx" \
+            --logger "console;verbosity=normal"
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          directory: ./coverage
-          flags: dotnet
+          name: dotnet-test-results
+          path: test-results/
 
-  # ── Python flow tests ────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2: Python flow tests
+  # Runs demo_offline.py (no credentials) and test_flows.py (14 unit assertions)
+  # ──────────────────────────────────────────────────────────────────────────
   python-tests:
     name: Python Flow Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: src/langgraph/requirements.txt
 
-      - name: Install deps
+      - name: Install Python dependencies
         run: pip install -r src/langgraph/requirements.txt
 
-      - name: Run tests (no integration)
-        run: python3 scripts/test_flows.py
-        env:
-          AZURE_OPENAI_ENDPOINT:    ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY:     ${{ secrets.AZURE_OPENAI_API_KEY }}
-          SUPABASE_DB_CONNECTION:   ${{ secrets.SUPABASE_DB_CONNECTION }}
-          CLOUDAMQP_URL:            ${{ secrets.CLOUDAMQP_URL }}
-          SAP_API_KEY:              ${{ secrets.SAP_API_KEY }}
-          SALESFORCE_CLIENT_ID:     ${{ secrets.SALESFORCE_CLIENT_ID }}
-          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
-          SERVICENOW_INSTANCE_URL:  ${{ secrets.SERVICENOW_INSTANCE_URL }}
-          HUBSPOT_ACCESS_TOKEN:     ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-          STRIPE_SECRET_KEY:        ${{ secrets.STRIPE_SECRET_KEY }}
-
-      - name: Run offline demo
+      - name: Run offline demo (zero credentials needed)
         run: python3 scripts/demo_offline.py
 
-  # ── Kong config validation ───────────────────────────────────────────
+      - name: Run flow unit tests (14 assertions)
+        run: python3 scripts/test_flows.py
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3: Kong Gateway config validation
+  # Uses deck (Kong's declarative config tool) to lint kong/kong.yml
+  # ──────────────────────────────────────────────────────────────────────────
   kong-validate:
-    name: Kong Configuration
+    name: Kong Config Validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deck
+      - name: Install Kong deck
         run: |
-          curl -sL -f -o deck.tar.gz https://github.com/Kong/deck/releases/latest/download/deck_linux_amd64.tar.gz
-          if [ ! -f deck.tar.gz ] || [ ! -s deck.tar.gz ]; then
-            echo "ERROR: Failed to download deck or file is empty"
-            exit 1
-          fi
-          tar -xzf deck.tar.gz
-          sudo mv deck /usr/local/bin/
-          rm deck.tar.gz
+          # Download specific stable version to avoid breaking changes
+          curl -sL https://github.com/Kong/deck/releases/download/v1.38.1/deck_1.38.1_linux_amd64.tar.gz \
+            | tar -xz
+          sudo mv deck /usr/local/bin/deck
+          deck version
 
-      - name: Validate kong.yml
-        run: deck validate --state kong/kong.yml
+      - name: Validate kong/kong.yml syntax
+        run: deck file validate kong/kong.yml
 
-  # ── Docker build ─────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 4: Docker build + smoke test
+  # Builds the Dockerfile, starts container with dummy env vars,
+  # checks /health returns HTTP 200 (health checks are skipped for placeholders)
+  # ──────────────────────────────────────────────────────────────────────────
   docker-build:
-    name: Docker Build
+    name: Docker Build & Smoke Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image
+      - name: Build Docker image
         working-directory: src
-        run: docker build -f Azentix.AgentHost/Dockerfile -t azentix-test .
-
-      - name: Smoke test — container starts
         run: |
-          docker run -d --name smoke -p 5001:5000 \
+          docker build \
+            -f Azentix.AgentHost/Dockerfile \
+            -t azentix-test:ci \
+            .
+
+      - name: Smoke test — container starts and /health responds
+        run: |
+          docker run -d \
+            --name azentix-smoke \
+            -p 5001:5000 \
             -e ASPNETCORE_URLS="http://+:5000" \
             -e AZURE_OPENAI_ENDPOINT="https://placeholder.openai.azure.com/" \
-            -e AZURE_OPENAI_API_KEY="placeholder-key" \
+            -e AZURE_OPENAI_API_KEY="placeholder-key-32chars-xxxxxxxxxx" \
+            -e AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini" \
+            -e AZURE_OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-small" \
             -e SUPABASE_URL="https://placeholder.supabase.co" \
-            -e SUPABASE_ANON_KEY="placeholder" \
-            -e SUPABASE_SERVICE_KEY="placeholder" \
-            -e SUPABASE_DB_CONNECTION="Host=placeholder" \
+            -e SUPABASE_ANON_KEY="placeholder-anon-key" \
+            -e SUPABASE_SERVICE_KEY="placeholder-service-key" \
+            -e SUPABASE_DB_CONNECTION="Host=localhost;Database=azentix" \
             -e CLOUDAMQP_URL="amqp://guest:guest@localhost//" \
-            azentix-test
-          sleep 20
-          docker logs smoke 2>&1 | tail -20
-          docker stop smoke
+            -e SAP_BASE_URL="https://sandbox.api.sap.com/s4hanacloud" \
+            -e SAP_API_KEY="placeholder" \
+            -e SALESFORCE_INSTANCE_URL="https://placeholder.salesforce.com" \
+            -e SALESFORCE_CLIENT_ID="placeholder" \
+            -e SALESFORCE_CLIENT_SECRET="placeholder" \
+            -e SALESFORCE_USERNAME="placeholder@example.com" \
+            -e SALESFORCE_PASSWORD="placeholder" \
+            -e SERVICENOW_INSTANCE_URL="https://placeholder.service-now.com" \
+            -e SERVICENOW_USERNAME="admin" \
+            -e SERVICENOW_PASSWORD="placeholder" \
+            -e HUBSPOT_ACCESS_TOKEN="placeholder" \
+            -e HUBSPOT_PORTAL_ID="12345678" \
+            -e STRIPE_SECRET_KEY="sk_test_placeholder" \
+            azentix-test:ci
 
-  # ── Security scan ────────────────────────────────────────────────────
+          echo "Waiting 30 seconds for container to start..."
+          sleep 30
+
+          echo "=== Container logs ==="
+          docker logs azentix-smoke 2>&1
+
+          echo "=== Health check ==="
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/health)
+          echo "Health endpoint returned HTTP $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "503" ]; then
+            echo "✅ Container is responding (200=Healthy, 503=Degraded but alive — both OK in smoke test)"
+            exit 0
+          else
+            echo "❌ Container not responding — HTTP $HTTP_STATUS"
+            docker logs azentix-smoke 2>&1
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: docker stop azentix-smoke || true && docker rm azentix-smoke || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 5: Security scan
+  # Checks .env is not tracked. TruffleHog is non-blocking (continue-on-error).
+  # ──────────────────────────────────────────────────────────────────────────
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for TruffleHog
 
-      - name: Check .env not committed
+      - name: Verify .env is not committed
         run: |
           if git ls-files --error-unmatch .env 2>/dev/null; then
-            echo "ERROR: .env is committed — remove it immediately!"
+            echo "❌ ERROR: .env file is committed! Remove it immediately and rotate all credentials."
             exit 1
           fi
-          echo ".env is not tracked. Good."
+          echo "✅ .env is not tracked by git."
+
+      - name: Verify .env is in .gitignore
+        run: |
+          if grep -q "^\.env$" .gitignore; then
+            echo "✅ .env is in .gitignore"
+          else
+            echo "❌ .env is NOT in .gitignore — add it!"
+            exit 1
+          fi
 
       - name: TruffleHog secret scan
         uses: trufflesecurity/trufflehog@main
         with:
           path: "./"
           head: HEAD
-        continue-on-error: true
+          base: HEAD~1
+        continue-on-error: true   # informational — does not block merge

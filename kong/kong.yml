@@ -1,7 +1,7 @@
 _format_version: "3.0"
 _transform: true
 
-# ── Services ──────────────────────────────────────────────────────────
+# ── Services ──────────────────────────────────────────────────────────────
 services:
   - name: azentix-agent-service
     url: https://azentix-agent-host.onrender.com
@@ -10,35 +10,26 @@ services:
     read_timeout:    120000
     routes:
       - name: azentix-agent-route
-        paths:   ["/azentix/v1"]
+        paths:      ["/azentix/v1"]
         strip_path: true
-        methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+        methods:    [GET, POST, PUT, PATCH, DELETE, OPTIONS]
     plugins:
-      # Authentication (replaces APIM subscription keys)
+      # Auth: replaces APIM subscription keys
       - name: key-auth
         config:
           key_names: [X-API-Key]
           hide_credentials: false
 
-      # Rate limiting (replaces APIM rate-limit policy)
+      # Rate limiting: replaces APIM rate-limit policy
       - name: rate-limiting
         config:
-          minute: 60
-          hour:   1000
-          policy: local
+          minute:         60
+          hour:           1000
+          policy:         local
           fault_tolerant: true
-          error_message: "Azentix: Rate limit exceeded. Retry after 60 seconds."
+          error_message:  "Azentix: Rate limit exceeded. Retry after 60 seconds."
 
-      # Response caching (replaces APIM semantic caching)
-      - name: proxy-cache
-        config:
-          response_code: [200]
-          request_method: [POST]
-          content_type:  ["application/json"]
-          cache_ttl: 300
-          strategy: memory
-
-      # Request enrichment (replaces APIM set-header policy)
+      # Request enrichment
       - name: request-transformer
         config:
           add:
@@ -54,14 +45,6 @@ services:
           credentials: false
           max_age:     3600
 
-      # Logging → Grafana Loki (replaces App Insights telemetry)
-      # Uncomment and set correct Loki push URL after Grafana Cloud setup
-      # - name: http-log
-      #   config:
-      #     http_endpoint: "https://logs-prod-xx.grafana.net/loki/api/v1/push"
-      #     method: POST
-      #     timeout: 5000
-
   - name: azentix-health-service
     url: https://azentix-agent-host.onrender.com
     routes:
@@ -74,11 +57,11 @@ services:
           minute: 120
           policy: local
 
-# ── Consumers (replaces APIM subscriptions) ───────────────────────────
+# ── Consumers: replaces APIM subscriptions ────────────────────────────────
 consumers:
   - username: azentix-internal
     keyauth_credentials:
-      - key: azentix-internal-key-change-this   # change before production
+      - key: azentix-internal-key-change-this
 
   - username: n8n-workflows
     keyauth_credentials:
@@ -87,10 +70,3 @@ consumers:
   - username: external-client
     keyauth_credentials:
       - key: external-client-key-change-this
-
-# ── Global plugins ────────────────────────────────────────────────────
-plugins:
-  - name: bot-detection
-    config:
-      allow: []
-      deny:  []
