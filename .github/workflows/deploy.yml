@@ -39,7 +39,7 @@ jobs:
       - name: Trigger Render deployment
         run: |
           if [ -z "$RENDER_SERVICE_ID" ] || [ -z "$RENDER_API_KEY" ]; then
-            echo "⚠️  Render secrets not configured — skipping deploy trigger."
+            echo "⚠️ Render secrets not configured — skipping deploy trigger."
             exit 0
           fi
 
@@ -60,27 +60,33 @@ jobs:
       - name: Wait for deployment and run health check
         run: |
           if [ -z "$RENDER_SERVICE_ID" ]; then
-            echo "Skipping health check — Render not configured"
+            echo "Render not configured — skipping health check"
             exit 0
           fi
 
           echo "⏳ Waiting 90 seconds for service startup..."
           sleep 90
 
-          APP_URL="${RENDER_APP_URL:-https://azentix-agent-host.onrender.com}"
-          echo "Checking health at $APP_URL/health"
+          APP_URL="${RENDER_APP_URL:-https://azentix-enterprise.onrender.com}"
+          HEALTH_URL="$APP_URL/health"
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/health")
-          echo "Health check HTTP status: $STATUS"
+          echo "🔎 Checking health at $HEALTH_URL"
+
+          STATUS=$(curl -s -o /tmp/health.json -w "%{http_code}" "$HEALTH_URL")
+          cat /tmp/health.json
 
           if [ "$STATUS" = "200" ]; then
-            echo "✅ Service is healthy"
-          elif [ "$STATUS" = "503" ]; then
-            echo "⚠️  Service responded 503 — degraded but running"
-          else
-            echo "❌ Health check failed"
-            exit 1
+            echo "✅ Service healthy or degraded (acceptable)"
+            exit 0
           fi
+
+          if [ "$STATUS" = "503" ]; then
+            echo "⚠️ Service degraded but running"
+            exit 0
+          fi
+
+          echo "❌ Service unhealthy (HTTP $STATUS)"
+          exit 1
 
       - name: Publish deployment notification (RabbitMQ)
         if: env.CLOUDAMQP_URL != ''
@@ -90,31 +96,31 @@ jobs:
           python3 <<'PYEOF'
           import os, json, pika
 
-          url = os.environ.get("CLOUDAMQP_URL", "")
+          url = os.environ.get("CLOUDAMQP_URL")
           if not url:
               print("RabbitMQ URL missing — skipping notification")
               exit(0)
 
           try:
-              connection = pika.BlockingConnection(pika.URLParameters(url))
-              channel = connection.channel()
-              channel.queue_declare(queue="notifications", durable=True)
+              conn = pika.BlockingConnection(pika.URLParameters(url))
+              ch = conn.channel()
+              ch.queue_declare(queue="notifications", durable=True)
 
               payload = {
                   "type": "deployment_complete",
-                  "environment": "${{ github.event.inputs.environment || 'dev' }}",
-                  "commit": "${{ github.sha }}"[:7],
-                  "actor": "${{ github.actor }}"
+                  "environment": os.environ.get("GITHUB_ENV", "dev"),
+                  "commit": os.environ.get("GITHUB_SHA", "")[:7],
+                  "actor": os.environ.get("GITHUB_ACTOR")
               }
 
-              channel.basic_publish(
+              ch.basic_publish(
                   exchange="",
                   routing_key="notifications",
                   body=json.dumps(payload),
                   properties=pika.BasicProperties(delivery_mode=2)
               )
 
-              connection.close()
+              conn.close()
               print("✅ Deployment notification published")
 
           except Exception as e:
