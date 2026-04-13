@@ -15,15 +15,26 @@ using Azentix.Models;
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
-// ✅ REQUIRED: global HttpClient for Semantic Kernel plugins
+/*
+|--------------------------------------------------------------------------
+| ✅ CRITICAL FIX FOR SEMANTIC KERNEL
+|--------------------------------------------------------------------------
+| Semantic Kernel plugins REQUIRE a concrete HttpClient instance.
+| IHttpClientFactory alone is NOT sufficient.
+*/
 builder.Services.AddHttpClient();
+
+builder.Services.AddSingleton<HttpClient>(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return factory.CreateClient();
+});
 
 // ── Azure OpenAI ──────────────────────────────────────────────────────────
 var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
 var aoaiKey      = cfg["AZURE_OPENAI_API_KEY"];
 var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-5-mini";
-// Embeddings are optional
-var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"];
+var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"]; // optional
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
@@ -34,26 +45,27 @@ if (azureOpenAiConfigured)
 {
     builder.Services.AddSingleton(sp =>
     {
-        var kernelBuilder = Kernel.CreateBuilder();
+        var kb = Kernel.CreateBuilder();
 
-        kernelBuilder.AddAzureOpenAIChatCompletion(
+        kb.AddAzureOpenAIChatCompletion(
             chatDeploy,
             aoaiEndpoint!,
             aoaiKey!
         );
 
-        kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
-        kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
-        kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
-        kernelBuilder.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
-        kernelBuilder.Plugins.AddFromType<StripePlugin>("Stripe");
-        kernelBuilder.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
-        kernelBuilder.Plugins.AddFromType<RagPlugin>("RAG");
+        // ✅ Plugins resolved via DI + HttpClient
+        kb.Plugins.AddFromType<SapPlugin>("SAP");
+        kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
+        kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
+        kb.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
+        kb.Plugins.AddFromType<StripePlugin>("Stripe");
+        kb.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
+        kb.Plugins.AddFromType<RagPlugin>("RAG");
 
-        return kernelBuilder.Build();
+        return kb.Build();
     });
 
-    // Optional embeddings
+    // ✅ Embeddings only if Azure allows it
     if (!string.IsNullOrWhiteSpace(embedDeploy))
     {
         builder.Services.AddSingleton(_ =>
@@ -171,6 +183,7 @@ app.UseSwagger();
 app.UseSwaggerUI();
 app.MapControllers();
 app.MapHealthChecks("/health");
+
 app.MapGet("/", () => new
 {
     name = "Azentix Agent Host",
