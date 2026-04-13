@@ -50,8 +50,8 @@ jobs:
 
           cat /tmp/render_response.json
 
-          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ]; then
-            echo "✅ Render deploy triggered successfully"
+          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "201" ] || [ "$RESPONSE" = "202" ]; then
+            echo "✅ Render deploy accepted (HTTP $RESPONSE)"
           else
             echo "❌ Render deploy failed (HTTP $RESPONSE)"
             exit 1
@@ -108,7 +108,6 @@ jobs:
 
               payload = {
                   "type": "deployment_complete",
-                  "environment": os.environ.get("GITHUB_ENV", "dev"),
                   "commit": os.environ.get("GITHUB_SHA", "")[:7],
                   "actor": os.environ.get("GITHUB_ACTOR")
               }
