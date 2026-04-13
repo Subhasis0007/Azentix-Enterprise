@@ -22,44 +22,50 @@ builder.Services.AddHttpClient();
 var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
 var aoaiKey      = cfg["AZURE_OPENAI_API_KEY"];
 var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-5-mini";
-// IMPORTANT: embeddings are optional / may not exist
+// Embeddings are optional
 var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"];
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
     !string.IsNullOrWhiteSpace(aoaiKey);
 
-// ── Semantic Kernel (CHAT ONLY unless embeddings exist) ───────────────────
+// ── Semantic Kernel ───────────────────────────────────────────────────────
 if (azureOpenAiConfigured)
 {
     builder.Services.AddSingleton(sp =>
     {
-        var kb = Kernel.CreateBuilder();
-        kb.AddAzureOpenAIChatCompletion(chatDeploy, aoaiEndpoint!, aoaiKey!);
+        var kernelBuilder = Kernel.CreateBuilder();
 
-        // ✅ Plugins resolved via DI + HttpClient
-        kb.Plugins.AddFromType<SapPlugin>("SAP");
-        kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
-        kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
-        kb.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
-        kb.Plugins.AddFromType<StripePlugin>("Stripe");
-        kb.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
-        kb.Plugins.AddFromType<RagPlugin>("RAG");
+        kernelBuilder.AddAzureOpenAIChatCompletion(
+            chatDeploy,
+            aoaiEndpoint!,
+            aoaiKey!
+        );
 
-        return kb.Build();
+        kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
+        kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
+        kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
+        kernelBuilder.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
+        kernelBuilder.Plugins.AddFromType<StripePlugin>("Stripe");
+        kernelBuilder.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
+        kernelBuilder.Plugins.AddFromType<RagPlugin>("RAG");
+
+        return kernelBuilder.Build();
     });
 
-    // ✅ Embeddings ONLY if deployment exists
+    // Optional embeddings
     if (!string.IsNullOrWhiteSpace(embedDeploy))
     {
         builder.Services.AddSingleton(_ =>
             new Azure.AI.OpenAI.AzureOpenAIClient(
-                new Uri(aoaiEndpoint!), new Azure.AzureKeyCredential(aoaiKey!))
-            .GetEmbeddingClient(embedDeploy));
+                new Uri(aoaiEndpoint!),
+                new Azure.AzureKeyCredential(aoaiKey!)
+            ).GetEmbeddingClient(embedDeploy)
+        );
     }
 }
 
-// ── Supabase pgvector ─────────────────────────────────────────────────────
+// ── Supabase ──────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new SupabaseConfig
 {
     Url                      = cfg["SUPABASE_URL"] ?? "",
@@ -140,52 +146,25 @@ builder.Services.AddScoped<IRagAgent, RagAgent>();
 builder.Services.AddScoped<IMemoryAgent, MemoryAgent>();
 builder.Services.AddScoped<IActionAgent, ActionAgent>();
 
-// ── OpenTelemetry → Grafana ────────────────────────────────────────────────
-var grafanaUrl = cfg["GRAFANA_PROMETHEUS_URL"];
-if (!string.IsNullOrWhiteSpace(grafanaUrl))
-{
-    builder.Services.AddOpenTelemetry()
-        .ConfigureResource(r => r.AddService("Azentix.AgentHost"))
-        .WithTracing(t => t
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddOtlpExporter(o =>
-            {
-                o.Endpoint = new Uri(grafanaUrl.Replace("/api/prom", "") + "/otlp");
-                o.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
-                o.Headers  = "Authorization=Basic " +
-                    Convert.ToBase64String(Encoding.UTF8.GetBytes(
-                        $"{cfg["GRAFANA_PROMETHEUS_USER"]}:{cfg["GRAFANA_API_KEY"]}"));
-            }));
-}
-
 // ── Health checks ─────────────────────────────────────────────────────────
 builder.Services.AddHealthChecks()
     .AddCheck(
         "supabase-pgvector",
         () => string.IsNullOrWhiteSpace(cfg["SUPABASE_DB_CONNECTION"])
             ? HealthCheckResult.Degraded("SUPABASE_DB_CONNECTION not configured")
-            : HealthCheckResult.Healthy(),
-        tags: new[] { "db", "vector" })
+            : HealthCheckResult.Healthy()
+    )
     .AddCheck(
         "azure-openai",
         () => azureOpenAiConfigured
             ? HealthCheckResult.Healthy()
-            : HealthCheckResult.Unhealthy("Azure OpenAI not configured"),
-        tags: new[] { "ai" });
+            : HealthCheckResult.Unhealthy("Azure OpenAI not configured")
+    );
 
 // ── Web API ───────────────────────────────────────────────────────────────
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new()
-    {
-        Title       = "Azentix Enterprise Agent API",
-        Version     = "v1",
-        Description = "SAP · Salesforce · ServiceNow · HubSpot · Stripe — Free Stack"
-    });
-});
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 app.UseSwagger();
@@ -199,6 +178,7 @@ app.MapGet("/", () => new
     aiEnabled = azureOpenAiConfigured,
     docs = "/swagger"
 });
+
 app.Run();
 
 public partial class Program { }
