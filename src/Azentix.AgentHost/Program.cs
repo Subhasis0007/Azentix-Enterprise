@@ -15,23 +15,29 @@ using Azentix.Models;
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
+// ✅ REQUIRED: global HttpClient for Semantic Kernel plugins
+builder.Services.AddHttpClient();
+
 // ── Azure OpenAI ──────────────────────────────────────────────────────────
 var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
 var aoaiKey      = cfg["AZURE_OPENAI_API_KEY"];
-var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"]      ?? "gpt-4o-mini";
-var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
+var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-5-mini";
+// IMPORTANT: embeddings are optional / may not exist
+var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"];
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
     !string.IsNullOrWhiteSpace(aoaiKey);
 
-// ── Semantic Kernel ───────────────────────────────────────────────────────
+// ── Semantic Kernel (CHAT ONLY unless embeddings exist) ───────────────────
 if (azureOpenAiConfigured)
 {
     builder.Services.AddSingleton(sp =>
     {
         var kb = Kernel.CreateBuilder();
         kb.AddAzureOpenAIChatCompletion(chatDeploy, aoaiEndpoint!, aoaiKey!);
+
+        // ✅ Plugins resolved via DI + HttpClient
         kb.Plugins.AddFromType<SapPlugin>("SAP");
         kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
@@ -39,13 +45,18 @@ if (azureOpenAiConfigured)
         kb.Plugins.AddFromType<StripePlugin>("Stripe");
         kb.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
         kb.Plugins.AddFromType<RagPlugin>("RAG");
+
         return kb.Build();
     });
 
-    builder.Services.AddSingleton(_ =>
-        new Azure.AI.OpenAI.AzureOpenAIClient(
-            new Uri(aoaiEndpoint!), new Azure.AzureKeyCredential(aoaiKey!))
-        .GetEmbeddingClient(embedDeploy));
+    // ✅ Embeddings ONLY if deployment exists
+    if (!string.IsNullOrWhiteSpace(embedDeploy))
+    {
+        builder.Services.AddSingleton(_ =>
+            new Azure.AI.OpenAI.AzureOpenAIClient(
+                new Uri(aoaiEndpoint!), new Azure.AzureKeyCredential(aoaiKey!))
+            .GetEmbeddingClient(embedDeploy));
+    }
 }
 
 // ── Supabase pgvector ─────────────────────────────────────────────────────
@@ -66,7 +77,6 @@ builder.Services.AddSingleton(_ => new SapConfiguration
     System          = cfg["SAP_SYSTEM"] ?? "SANDBOX",
     DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? "GB01"
 });
-builder.Services.AddHttpClient<SapPlugin>(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 // ── Salesforce ────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new SalesforceConfiguration
@@ -78,7 +88,6 @@ builder.Services.AddSingleton(_ => new SalesforceConfiguration
     Password     = cfg["SALESFORCE_PASSWORD"] ?? "",
     ApiVersion   = cfg["SALESFORCE_API_VERSION"] ?? "v59.0"
 });
-builder.Services.AddHttpClient<SalesforcePlugin>();
 
 // ── ServiceNow ────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new ServiceNowConfiguration
@@ -87,7 +96,6 @@ builder.Services.AddSingleton(_ => new ServiceNowConfiguration
     Username    = cfg["SERVICENOW_USERNAME"] ?? "",
     Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
 });
-builder.Services.AddHttpClient<ServiceNowPlugin>();
 
 // ── HubSpot ───────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new HubSpotConfiguration
@@ -96,7 +104,6 @@ builder.Services.AddSingleton(_ => new HubSpotConfiguration
     PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
     ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
 });
-builder.Services.AddHttpClient<HubSpotPlugin>();
 
 // ── Stripe ────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new StripeConfiguration
@@ -105,7 +112,6 @@ builder.Services.AddSingleton(_ => new StripeConfiguration
     ApiVersion    = cfg["STRIPE_API_VERSION"] ?? "2024-06-20",
     WebhookSecret = cfg["STRIPE_WEBHOOK_SECRET"]
 });
-builder.Services.AddHttpClient<StripePlugin>();
 
 // ── RabbitMQ ──────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(_ => new RabbitMQConfiguration
@@ -153,7 +159,7 @@ if (!string.IsNullOrWhiteSpace(grafanaUrl))
             }));
 }
 
-// ── Health checks (FIXED) ─────────────────────────────────────────────────
+// ── Health checks ─────────────────────────────────────────────────────────
 builder.Services.AddHealthChecks()
     .AddCheck(
         "supabase-pgvector",
@@ -172,12 +178,14 @@ builder.Services.AddHealthChecks()
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
+{
     c.SwaggerDoc("v1", new()
     {
         Title       = "Azentix Enterprise Agent API",
         Version     = "v1",
         Description = "SAP · Salesforce · ServiceNow · HubSpot · Stripe — Free Stack"
-    }));
+    });
+});
 
 var app = builder.Build();
 app.UseSwagger();
