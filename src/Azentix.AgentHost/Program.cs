@@ -164,6 +164,9 @@ if (azureOpenAiConfigured)
 // These are ONLY for controllers / background services.
 // Plugins DO NOT see these — that’s intentional.
 //
+
+builder.Services.AddScoped<IDirectorAgent, DirectorAgent>();
+
 builder.Services.AddSingleton(new AgentConfiguration
 {
     MaxIterations         = int.Parse(cfg["AGENT_MAX_ITERATIONS"] ?? "10"),
@@ -172,6 +175,9 @@ builder.Services.AddSingleton(new AgentConfiguration
     TokenBudget           = int.Parse(cfg["AGENT_TOKEN_BUDGET"] ?? "16000"),
     ModelDeployment       = chatDeploy
 });
+
+
+
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
