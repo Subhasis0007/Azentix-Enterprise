@@ -16,7 +16,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.SemanticKernel" Version="1.21.0" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.21.0" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.21.0-alpha" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageReference Include="Npgsql" Version="8.0.0" />
     <PackageReference Include="Pgvector" Version="0.2.0" />
