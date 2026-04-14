@@ -7,21 +7,45 @@ using Azentix.Models;
 
 namespace Azentix.Agents.Memory;
 
-public class SupabaseVectorMemory : IVectorMemory
+public sealed class SupabaseVectorMemory : IVectorMemory
 {
-    private readonly string _connectionString;
     private readonly ILogger<SupabaseVectorMemory> _logger;
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly NpgsqlDataSource? _dataSource;
+    private readonly bool _enabled;
 
-    public SupabaseVectorMemory(SupabaseConfig cfg, ILogger<SupabaseVectorMemory> logger)
+    public SupabaseVectorMemory(
+        SupabaseConfig cfg,
+        ILogger<SupabaseVectorMemory> logger)
     {
-        _connectionString = cfg.DatabaseConnectionString;
         _logger = logger;
 
-        // ✅ Npgsql 8+ compliant datasource configuration
-        var builder = new NpgsqlDataSourceBuilder(_connectionString);
-        builder.UseVector();
-        _dataSource = builder.Build();
+        // ✅ HARD GUARD — NEVER crash app startup
+        if (string.IsNullOrWhiteSpace(cfg.DatabaseConnectionString))
+        {
+            _enabled = false;
+            _logger.LogWarning(
+                "SUPABASE_DB_CONNECTION is not configured. Vector memory disabled."
+            );
+            return;
+        }
+
+        try
+        {
+            var builder = new NpgsqlDataSourceBuilder(cfg.DatabaseConnectionString);
+            builder.UseVector();
+            _dataSource = builder.Build();
+
+            _enabled = true;
+            _logger.LogInformation("Supabase vector memory initialised.");
+        }
+        catch (Exception ex)
+        {
+            _enabled = false;
+            _logger.LogError(
+                ex,
+                "Invalid SUPABASE_DB_CONNECTION. Vector memory disabled."
+            );
+        }
     }
 
     public async Task SaveAsync(
@@ -33,11 +57,16 @@ public class SupabaseVectorMemory : IVectorMemory
         string metadata = "{}",
         CancellationToken ct = default)
     {
+        if (!_enabled)
+            return;
+
         await using var conn = await OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
-            INSERT INTO agent_memory (id,content,description,embedding,collection,metadata,stored_at)
-            VALUES (@id,@c,@d,@e,@col,@m::jsonb,NOW())
-            ON CONFLICT(id) DO UPDATE
+            INSERT INTO agent_memory
+              (id, content, description, embedding, collection, metadata, stored_at)
+            VALUES
+              (@id,@c,@d,@e,@col,@m::jsonb,NOW())
+            ON CONFLICT (id) DO UPDATE
               SET content=EXCLUDED.content,
                   description=EXCLUDED.description,
                   embedding=EXCLUDED.embedding,
@@ -51,7 +80,6 @@ public class SupabaseVectorMemory : IVectorMemory
         cmd.Parameters.AddWithValue("m", metadata);
 
         await cmd.ExecuteNonQueryAsync(ct);
-        _logger.LogDebug("Saved {Id} to collection {Col}", id, collection);
     }
 
     public async Task<List<MemorySearchResult>> SearchAsync(
@@ -61,14 +89,17 @@ public class SupabaseVectorMemory : IVectorMemory
         double minRelevance = 0.7,
         CancellationToken ct = default)
     {
+        if (!_enabled)
+            return [];
+
         await using var conn = await OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(@"
-            SELECT id, content, description, COALESCE(source,''), 1-(embedding<=>@q) AS sim
-            FROM   agent_memory
-            WHERE  collection = @col
-            AND    1-(embedding<=>@q) >= @min
-            ORDER  BY embedding <=> @q
-            LIMIT  @k", conn);
+            SELECT id, content, description, COALESCE(source,''), 1-(embedding <=> @q) AS sim
+            FROM agent_memory
+            WHERE collection = @col
+              AND 1-(embedding <=> @q) >= @min
+            ORDER BY embedding <=> @q
+            LIMIT @k", conn);
 
         cmd.Parameters.AddWithValue("q", new Vector(queryEmbedding));
         cmd.Parameters.AddWithValue("col", collection);
@@ -90,16 +121,19 @@ public class SupabaseVectorMemory : IVectorMemory
             });
         }
 
-        _logger.LogDebug("Search in {Col}: {N} results", collection, results.Count);
         return results;
     }
 
-    public async Task ClearWorkingMemoryAsync(string agentId, CancellationToken ct = default)
+    public async Task ClearWorkingMemoryAsync(
+        string agentId,
+        CancellationToken ct = default)
     {
+        if (!_enabled)
+            return;
+
         await using var conn = await OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            "DELETE FROM agent_memory WHERE agent_id=@id AND scope='Working'",
-            conn);
+            "DELETE FROM agent_memory WHERE agent_id=@id AND scope='Working'", conn);
 
         cmd.Parameters.AddWithValue("id", agentId);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -107,6 +141,9 @@ public class SupabaseVectorMemory : IVectorMemory
 
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken ct)
     {
+        if (_dataSource is null)
+            throw new InvalidOperationException("Vector memory is disabled.");
+
         return await _dataSource.OpenConnectionAsync(ct);
     }
 }
