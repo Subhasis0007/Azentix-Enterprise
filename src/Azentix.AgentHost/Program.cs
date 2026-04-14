@@ -1,7 +1,7 @@
 
-using System.Text;
 using Microsoft.SemanticKernel;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.DependencyInjection;
 using Azentix.Agents.Director;
 using Azentix.Agents.Rag;
 using Azentix.Agents.Memory;
@@ -14,21 +14,10 @@ var cfg = builder.Configuration;
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ HTTP CLIENT FACTORY (CORRECT WAY)
+// ASP.NET CORE HTTP CLIENT (for controllers, etc.)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-builder.Services.AddHttpClient(); // base registration
-
-builder.Services.AddHttpClient("SAP", client =>
-{
-    client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json");
-});
-
-builder.Services.AddHttpClient("Salesforce");
-builder.Services.AddHttpClient("ServiceNow");
-builder.Services.AddHttpClient("HubSpot");
-builder.Services.AddHttpClient("Stripe");
-builder.Services.AddHttpClient("RabbitMQ");
+builder.Services.AddHttpClient();
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +27,6 @@ builder.Services.AddHttpClient("RabbitMQ");
 var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
 var aoaiKey      = cfg["AZURE_OPENAI_API_KEY"];
 var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
-var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"];
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
@@ -46,14 +34,22 @@ var azureOpenAiConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Semantic Kernel
+// ✅ SEMANTIC KERNEL (SUPPORTED DI REGISTRATION)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 if (azureOpenAiConfigured)
 {
-    builder.Services.AddSingleton(sp =>
+    builder.Services.AddSingleton<Kernel>(_ =>
     {
         var kernelBuilder = Kernel.CreateBuilder();
+
+        // ✅ REGISTER IHttpClientFactory INSIDE SK
+        kernelBuilder.Services.AddHttpClient("SAP");
+        kernelBuilder.Services.AddHttpClient("Salesforce");
+        kernelBuilder.Services.AddHttpClient("ServiceNow");
+        kernelBuilder.Services.AddHttpClient("HubSpot");
+        kernelBuilder.Services.AddHttpClient("Stripe");
+        kernelBuilder.Services.AddHttpClient("RabbitMQ");
 
         kernelBuilder.AddAzureOpenAIChatCompletion(
             chatDeploy,
@@ -61,7 +57,7 @@ if (azureOpenAiConfigured)
             aoaiKey!
         );
 
-        // ✅ Plugins resolved via DI (IHttpClientFactory safe)
+        // ✅ Plugins will now resolve IHttpClientFactory correctly
         kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
         kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
@@ -72,29 +68,17 @@ if (azureOpenAiConfigured)
 
         return kernelBuilder.Build();
     });
-
-    if (!string.IsNullOrWhiteSpace(embedDeploy))
-    {
-        builder.Services.AddSingleton(_ =>
-            new Azure.AI.OpenAI.AzureOpenAIClient(
-                new Uri(aoaiEndpoint!),
-                new Azure.AzureKeyCredential(aoaiKey!)
-            ).GetEmbeddingClient(embedDeploy)
-        );
-    }
 }
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Configurations
+// Configuration objects
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddSingleton(new SapConfiguration
 {
-    BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
-    ApiKey          = cfg["SAP_API_KEY"] ?? "",
-    System          = cfg["SAP_SYSTEM"] ?? "SANDBOX",
-    DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? "GB01"
+    BaseUrl = cfg["SAP_BASE_URL"] ?? "",
+    ApiKey  = cfg["SAP_API_KEY"] ?? ""
 });
 
 builder.Services.AddSingleton(new SalesforceConfiguration
@@ -103,8 +87,7 @@ builder.Services.AddSingleton(new SalesforceConfiguration
     ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
     ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
     Username     = cfg["SALESFORCE_USERNAME"] ?? "",
-    Password     = cfg["SALESFORCE_PASSWORD"] ?? "",
-    ApiVersion   = cfg["SALESFORCE_API_VERSION"] ?? "v59.0"
+    Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
 });
 
 builder.Services.AddSingleton(new ServiceNowConfiguration
@@ -114,6 +97,7 @@ builder.Services.AddSingleton(new ServiceNowConfiguration
     Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
 });
 
+
 builder.Services.AddSingleton(new HubSpotConfiguration
 {
     AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
@@ -121,21 +105,15 @@ builder.Services.AddSingleton(new HubSpotConfiguration
     ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
 });
 
+
 builder.Services.AddSingleton(new StripeConfiguration
 {
-    SecretKey     = cfg["STRIPE_SECRET_KEY"] ?? "",
-    ApiVersion    = cfg["STRIPE_API_VERSION"] ?? "2024-06-20",
-    WebhookSecret = cfg["STRIPE_WEBHOOK_SECRET"]
+    SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
 });
 
 builder.Services.AddSingleton(new RabbitMQConfiguration
 {
-    AmqpUrl            = cfg["CLOUDAMQP_URL"] ?? "",
-    QueueSapPrices     = "sap-price-changes",
-    QueueIncidents     = "servicenow-incidents",
-    QueueStripe        = "stripe-events",
-    QueueApproval      = "approval-queue",
-    QueueNotifications = "notifications"
+    AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
 });
 
 builder.Services.AddSingleton(new AgentConfiguration
@@ -159,7 +137,7 @@ builder.Services.AddScoped<IActionAgent, ActionAgent>();
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Health checks & Web
+// Web + Health
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddHealthChecks()
@@ -178,7 +156,13 @@ app.UseSwaggerUI();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
-app.MapGet("/", () => new { name = "Azentix Agent Host", aiEnabled = azureOpenAiConfigured });
+
+app.MapGet("/", () => new
+{
+    name = "Azentix Agent Host",
+    aiEnabled = azureOpenAiConfigured,
+    docs = "/swagger"
+});
 
 app.Run();
 
