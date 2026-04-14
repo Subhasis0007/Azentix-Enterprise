@@ -13,7 +13,7 @@ using Azentix.Models;
 
 using Azure.AI.OpenAI;
 using OpenAI.Embeddings;
-using System.ClientModel; // ✅ REQUIRED (ApiKeyCredential)
+using System.ClientModel;
 
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
@@ -23,7 +23,7 @@ var cfg = builder.Configuration;
 // ✅ ASP.NET Core DI (Infrastructure)
 // ─────────────────────────────────────────────────────────────
 //
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(); // for controllers, health checks, etc.
 
 //
 // ─────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ var azureConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL (EXPLICIT AZURE WIRING – CORRECT)
+// ✅ SEMANTIC KERNEL (PLUGIN-SAFE DI)
 // ─────────────────────────────────────────────────────────────
 //
 if (azureConfigured)
@@ -50,9 +50,13 @@ if (azureConfigured)
     {
         var kb = Kernel.CreateBuilder();
 
+        // ✅✅✅ THIS IS THE CRITICAL FIX
+        // Register HttpClientFactory INSIDE Semantic Kernel DI
+        kb.Services.AddHttpClient();
+
         // ---------------------------------------------------------
-        // ✅ Azure OpenAI CLIENT (CORRECT CREDENTIAL TYPE)
-// ---------------------------------------------------------
+        // Azure OpenAI client (correct credential type)
+        // ---------------------------------------------------------
         var azureClient = new AzureOpenAIClient(
             new Uri(aoaiEndpoint!),
             new ApiKeyCredential(aoaiKey!)
@@ -61,27 +65,27 @@ if (azureConfigured)
         kb.Services.AddSingleton(azureClient);
 
         // ---------------------------------------------------------
-        // ✅ Azure OpenAI CHAT (NO SK FACTORY / NO FALLBACK)
-// ---------------------------------------------------------
+        // Azure OpenAI Chat (explicit, no fallback)
+        // ---------------------------------------------------------
         var chatService = new AzureOpenAIChatCompletionService(
-            chatDeploy,      // deploymentName
-            azureClient,     // AzureOpenAIClient
-            null,            // modelId (optional)
-            null             // ILoggerFactory (optional)
+            chatDeploy,
+            azureClient,
+            null,
+            null
         );
 
         kb.Services.AddSingleton<IChatCompletionService>(chatService);
 
         // ---------------------------------------------------------
-        // ✅ Azure OpenAI EMBEDDINGS
-// ---------------------------------------------------------
+        // Azure OpenAI Embeddings
+        // ---------------------------------------------------------
         kb.Services.AddSingleton<EmbeddingClient>(
             azureClient.GetEmbeddingClient(embedDeploy)
         );
 
         // ---------------------------------------------------------
-        // ✅ Vector Memory (RAG)
-// ---------------------------------------------------------
+        // Vector Memory (RAG)
+        // ---------------------------------------------------------
         kb.Services.AddSingleton(new SupabaseConfig
         {
             Url                      = cfg["SUPABASE_URL"] ?? "",
@@ -94,8 +98,8 @@ if (azureConfigured)
         kb.Services.AddScoped<IRagAgent, RagAgent>();
 
         // ---------------------------------------------------------
-        // ✅ Plugins
-// ---------------------------------------------------------
+        // Plugins (now IHttpClientFactory is resolvable ✅)
+        // ---------------------------------------------------------
         kb.Plugins.AddFromType<SapPlugin>("SAP");
         kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
