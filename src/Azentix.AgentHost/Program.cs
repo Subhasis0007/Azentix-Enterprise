@@ -93,6 +93,8 @@ if (azureOpenAiConfigured)
             AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
         });
 
+        kernelBuilder.Services.AddScoped<IRagAgent, RagAgent>();
+
         // ✅ Azure OpenAI
         kernelBuilder.AddAzureOpenAIChatCompletion(
             chatDeploy,
