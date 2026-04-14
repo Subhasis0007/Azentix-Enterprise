@@ -1,5 +1,7 @@
 
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -17,95 +19,70 @@ var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
 //
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 // ✅ ASP.NET Core DI (Infrastructure)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 //
 builder.Services.AddHttpClient();
 
 //
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 // ✅ Azure OpenAI Configuration
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 //
-var aoaiEndpoint  = cfg["AZURE_OPENAI_ENDPOINT"];
-var aoaiKey       = cfg["AZURE_OPENAI_API_KEY"];
-var chatDeploy    = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
-var embedDeploy   = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
+var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
+var aoaiKey      = cfg["AZURE_OPENAI_API_KEY"];
+var chatDeploy   = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
+var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
 
-var azureOpenAiConfigured =
+var azureConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
     !string.IsNullOrWhiteSpace(aoaiKey);
 
 //
-// ─────────────────────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL (EXPLICIT AZURE BINDING – FINAL FIX)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// ✅ SEMANTIC KERNEL (EXPLICIT AZURE WIRING)
+// ─────────────────────────────────────────────────────────────
 //
-if (azureOpenAiConfigured)
+if (azureConfigured)
 {
     builder.Services.AddSingleton<Kernel>(_ =>
     {
-        var kernelBuilder = Kernel.CreateBuilder();
+        var kb = Kernel.CreateBuilder();
 
-        // ---------------------------------------------------------------------
-        // ✅ HttpClients for Plugins
-        // ---------------------------------------------------------------------
-        kernelBuilder.Services.AddHttpClient("SAP");
-        kernelBuilder.Services.AddHttpClient("Salesforce");
-        kernelBuilder.Services.AddHttpClient("ServiceNow");
-        kernelBuilder.Services.AddHttpClient("HubSpot");
-        kernelBuilder.Services.AddHttpClient("Stripe");
-        kernelBuilder.Services.AddHttpClient("RabbitMQ");
+        // ---------------------------------------------------------
+        // Azure OpenAI CLIENT (manual + safe)
+        // ---------------------------------------------------------
+        var azureClient = new AzureOpenAIClient(
+            new Uri(aoaiEndpoint!),
+            new AzureKeyCredential(aoaiKey!)
+        );
 
-        // ---------------------------------------------------------------------
-        // ✅ Plugin Configurations
-        // ---------------------------------------------------------------------
-        kernelBuilder.Services.AddSingleton(new SapConfiguration
-        {
-            BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
-            ApiKey          = cfg["SAP_API_KEY"] ?? "",
-            System          = cfg["SAP_SYSTEM"] ?? "SANDBOX",
-            DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? "GB01"
-        });
+        kb.Services.AddSingleton(azureClient);
 
-        kernelBuilder.Services.AddSingleton(new SalesforceConfiguration
-        {
-            InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
-            ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
-            ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
-            Username     = cfg["SALESFORCE_USERNAME"] ?? "",
-            Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
-        });
+        // ---------------------------------------------------------
+        // Azure OpenAI CHAT (NO SK FACTORY / NO FALLBACK)
+        // ---------------------------------------------------------
+        var chatService = new AzureOpenAIChatCompletionService(
+            chatDeploy,      // deploymentName
+            azureClient,     // AzureOpenAIClient
+            null,            // modelId (optional)
+            null             // ILoggerFactory (optional)
+        );
 
-        kernelBuilder.Services.AddSingleton(new ServiceNowConfiguration
-        {
-            InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
-            Username    = cfg["SERVICENOW_USERNAME"] ?? "",
-            Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
-        });
+        kb.Services.AddSingleton<IChatCompletionService>(chatService);
 
-        kernelBuilder.Services.AddSingleton(new HubSpotConfiguration
-        {
-            AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
-            PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
-            ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
-        });
+        // ---------------------------------------------------------
+        // Azure OpenAI EMBEDDINGS
+        // ---------------------------------------------------------
+        kb.Services.AddSingleton<EmbeddingClient>(
+            azureClient.GetEmbeddingClient(embedDeploy)
+        );
 
-        kernelBuilder.Services.AddSingleton(new StripeConfiguration
-        {
-            SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
-        });
-
-        kernelBuilder.Services.AddSingleton(new RabbitMQConfiguration
-        {
-            AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
-        });
-
-        // ---------------------------------------------------------------------
-        // ✅ Supabase Vector Memory (RAG)
-        // ---------------------------------------------------------------------
-        kernelBuilder.Services.AddSingleton(new SupabaseConfig
+        // ---------------------------------------------------------
+        // Vector Memory (RAG)
+        // ---------------------------------------------------------
+        kb.Services.AddSingleton(new SupabaseConfig
         {
             Url                      = cfg["SUPABASE_URL"] ?? "",
             AnonKey                  = cfg["SUPABASE_ANON_KEY"] ?? "",
@@ -113,64 +90,43 @@ if (azureOpenAiConfigured)
             DatabaseConnectionString = cfg["SUPABASE_DB_CONNECTION"] ?? ""
         });
 
-        kernelBuilder.Services.AddSingleton<IVectorMemory, SupabaseVectorMemory>();
-        kernelBuilder.Services.AddScoped<IRagAgent, RagAgent>();
+        kb.Services.AddSingleton<IVectorMemory, SupabaseVectorMemory>();
+        kb.Services.AddScoped<IRagAgent, RagAgent>();
 
-        // ---------------------------------------------------------------------
-        // ✅ Azure OpenAI Client (MANUAL – NO SK FACTORY)
-        // ---------------------------------------------------------------------
-        var azureClient = new AzureOpenAIClient(
-            new Uri(aoaiEndpoint!),
-            new AzureKeyCredential(aoaiKey!)
-        );
+        // ---------------------------------------------------------
+        // Plugins
+        // ---------------------------------------------------------
+        kb.Plugins.AddFromType<SapPlugin>("SAP");
+        kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
+        kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
+        kb.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
+        kb.Plugins.AddFromType<StripePlugin>("Stripe");
+        kb.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
+        kb.Plugins.AddFromType<RagPlugin>("RAG");
 
-        kernelBuilder.Services.AddSingleton(azureClient);
-
-        kernelBuilder.Services.AddSingleton<EmbeddingClient>(_ =>
-            azureClient.GetEmbeddingClient(embedDeploy)
-        );
-
-        // ✅ EXPLICIT Azure Chat binding (NO OpenAI fallback)
-        kernelBuilder.AddAzureOpenAIChatCompletion(
-            deploymentName: chatDeploy,
-            azureOpenAIClient: azureClient
-        );
-
-        // ---------------------------------------------------------------------
-        // ✅ Plugins
-        // ---------------------------------------------------------------------
-        kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
-        kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
-        kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
-        kernelBuilder.Plugins.AddFromType<HubSpotPlugin>("HubSpot");
-        kernelBuilder.Plugins.AddFromType<StripePlugin>("Stripe");
-        kernelBuilder.Plugins.AddFromType<RabbitMQPlugin>("RabbitMQ");
-        kernelBuilder.Plugins.AddFromType<RagPlugin>("RAG");
-
-        return kernelBuilder.Build();
+        return kb.Build();
     });
 }
 
 //
-// ─────────────────────────────────────────────────────────────────────────────
-// ✅ ASP.NET Core DI — Controller Agents
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// ✅ ASP.NET Core DI — Controllers
+// ─────────────────────────────────────────────────────────────
 //
 builder.Services.AddScoped<IDirectorAgent, DirectorAgent>();
 
 builder.Services.AddSingleton(new AgentConfiguration
 {
-    MaxIterations         = int.Parse(cfg["AGENT_MAX_ITERATIONS"] ?? "10"),
-    TimeoutSeconds        = int.Parse(cfg["AGENT_TIMEOUT_SECONDS"] ?? "60"),
-    MaxTokensPerIteration = int.Parse(cfg["AGENT_MAX_TOKENS"] ?? "2000"),
-    TokenBudget           = int.Parse(cfg["AGENT_TOKEN_BUDGET"] ?? "16000"),
-    ModelDeployment       = chatDeploy
+    MaxIterations   = int.Parse(cfg["AGENT_MAX_ITERATIONS"] ?? "10"),
+    TimeoutSeconds  = int.Parse(cfg["AGENT_TIMEOUT_SECONDS"] ?? "60"),
+    TokenBudget     = int.Parse(cfg["AGENT_TOKEN_BUDGET"] ?? "16000"),
+    ModelDeployment = chatDeploy
 });
 
 //
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 // ✅ ASP.NET Pipeline
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 //
 builder.Services.AddControllers();
 builder.Services.AddSwaggerGen();
@@ -178,7 +134,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks()
     .AddCheck(
         "azure-openai",
-        () => azureOpenAiConfigured
+        () => azureConfigured
             ? HealthCheckResult.Healthy()
             : HealthCheckResult.Unhealthy("Azure OpenAI not configured")
     );
@@ -194,7 +150,7 @@ app.MapHealthChecks("/health");
 app.MapGet("/", () => new
 {
     name = "Azentix Agent Host",
-    aiEnabled = azureOpenAiConfigured,
+    aiEnabled = azureConfigured,
     docs = "/swagger"
 });
 
