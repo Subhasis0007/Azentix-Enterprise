@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Azentix.Agents.Director;
 using Azentix.Agents.Rag;
 using Azentix.Agents.Memory;
-using Azentix.Agents.Action;
 using Azentix.Agents.Plugins;
 using Azentix.Models;
 
@@ -19,7 +18,7 @@ var cfg = builder.Configuration;
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ ASP.NET Core DI (Controllers & Infrastructure)
+// ✅ ASP.NET Core DI (Infrastructure)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddHttpClient();
@@ -29,10 +28,10 @@ builder.Services.AddHttpClient();
 // ✅ Azure OpenAI Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 //
-var aoaiEndpoint    = cfg["AZURE_OPENAI_ENDPOINT"];
-var aoaiKey         = cfg["AZURE_OPENAI_API_KEY"];
-var chatDeploy      = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
-var embedDeploy     = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
+var aoaiEndpoint  = cfg["AZURE_OPENAI_ENDPOINT"];
+var aoaiKey       = cfg["AZURE_OPENAI_API_KEY"];
+var chatDeploy    = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
+var embedDeploy   = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
@@ -40,7 +39,7 @@ var azureOpenAiConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL (SAFE SDK BINDING)
+// ✅ SEMANTIC KERNEL (EXPLICIT AZURE BINDING – FINAL FIX)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 if (azureOpenAiConfigured)
@@ -118,23 +117,24 @@ if (azureOpenAiConfigured)
         kernelBuilder.Services.AddScoped<IRagAgent, RagAgent>();
 
         // ---------------------------------------------------------------------
-        // ✅ Azure OpenAI Client (CRITICAL FIX)
+        // ✅ Azure OpenAI Client (MANUAL – NO SK FACTORY)
         // ---------------------------------------------------------------------
-        kernelBuilder.Services.AddSingleton(new AzureOpenAIClient(
+        var azureClient = new AzureOpenAIClient(
             new Uri(aoaiEndpoint!),
             new AzureKeyCredential(aoaiKey!)
-        ));
+        );
 
-        kernelBuilder.Services.AddSingleton<EmbeddingClient>(sp =>
-        {
-            var client = sp.GetRequiredService<AzureOpenAIClient>();
-            return client.GetEmbeddingClient(embedDeploy);
-        });
+        kernelBuilder.Services.AddSingleton(azureClient);
 
-        // ---------------------------------------------------------------------
-        // ✅ Chat Completion (SAFE OVERLOAD — NO INTERNAL CLIENT CREATION)
-        // ---------------------------------------------------------------------
-        kernelBuilder.AddAzureOpenAIChatCompletion(chatDeploy);
+        kernelBuilder.Services.AddSingleton<EmbeddingClient>(_ =>
+            azureClient.GetEmbeddingClient(embedDeploy)
+        );
+
+        // ✅ EXPLICIT Azure Chat binding (NO OpenAI fallback)
+        kernelBuilder.AddAzureOpenAIChatCompletion(
+            deploymentName: chatDeploy,
+            azureOpenAIClient: azureClient
+        );
 
         // ---------------------------------------------------------------------
         // ✅ Plugins
