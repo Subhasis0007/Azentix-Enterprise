@@ -13,19 +13,36 @@ public class SapPlugin
     private readonly SapConfiguration _cfg;
     private readonly ILogger<SapPlugin> _log;
 
-    public SapPlugin(
-        IHttpClientFactory httpFactory,
-        SapConfiguration cfg,
-        ILogger<SapPlugin> log)
-    {
-        _cfg = cfg;
-        _log = log;
+    
+public SapPlugin(
+    IHttpClientFactory httpFactory,
+    SapConfiguration cfg,
+    ILogger<SapPlugin> log)
+{
+    _cfg = cfg;
+    _log = log;
+    _http = httpFactory.CreateClient("SAP");
 
-        _http = httpFactory.CreateClient("SAP");
-        _http.BaseAddress = new Uri(cfg.BaseUrl);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("APIKey", cfg.ApiKey);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json");
+    if (string.IsNullOrWhiteSpace(cfg.BaseUrl))
+    {
+        _log.LogWarning(
+            "SAP_BASE_URL is not configured. SAP plugin will run in mock mode."
+        );
+        return; // ✅ critical: DO NOT create Uri("")
     }
+
+    if (!Uri.TryCreate(cfg.BaseUrl, UriKind.Absolute, out var baseUri))
+    {
+        throw new InvalidOperationException(
+            $"Invalid SAP_BASE_URL configured: '{cfg.BaseUrl}'"
+        );
+    }
+
+    _http.BaseAddress = baseUri;
+    _http.DefaultRequestHeaders.TryAddWithoutValidation("APIKey", cfg.ApiKey ?? "");
+    _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json");
+}
+
 
     [KernelFunction("sap_get_material")]
     [Description("Get SAP material master data.")]
