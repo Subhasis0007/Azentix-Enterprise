@@ -23,7 +23,7 @@ var cfg = builder.Configuration;
 // ✅ ASP.NET Core DI (Infrastructure)
 // ─────────────────────────────────────────────────────────────
 //
-builder.Services.AddHttpClient(); // for controllers, health checks, etc.
+builder.Services.AddHttpClient();
 
 //
 // ─────────────────────────────────────────────────────────────
@@ -50,12 +50,57 @@ if (azureConfigured)
     {
         var kb = Kernel.CreateBuilder();
 
-        // ✅✅✅ THIS IS THE CRITICAL FIX
-        // Register HttpClientFactory INSIDE Semantic Kernel DI
+        // ---------------------------------------------------------
+        // ✅ HttpClientFactory MUST be registered in SK DI
+        // ---------------------------------------------------------
         kb.Services.AddHttpClient();
 
         // ---------------------------------------------------------
-        // Azure OpenAI client (correct credential type)
+        // ✅ Plugin Configurations (CRITICAL FIX)
+        // ---------------------------------------------------------
+        kb.Services.AddSingleton(new SapConfiguration
+        {
+            BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
+            ApiKey          = cfg["SAP_API_KEY"] ?? "",
+            System          = cfg["SAP_SYSTEM"] ?? "",
+            DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? ""
+        });
+
+        kb.Services.AddSingleton(new SalesforceConfiguration
+        {
+            InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
+            ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
+            ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
+            Username     = cfg["SALESFORCE_USERNAME"] ?? "",
+            Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
+        });
+
+        kb.Services.AddSingleton(new ServiceNowConfiguration
+        {
+            InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
+            Username    = cfg["SERVICENOW_USERNAME"] ?? "",
+            Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
+        });
+
+        kb.Services.AddSingleton(new HubSpotConfiguration
+        {
+            AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
+            PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
+            ApiBase     = cfg["HUBSPOT_API_BASE"] ?? ""
+        });
+
+        kb.Services.AddSingleton(new StripeConfiguration
+        {
+            SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
+        });
+
+        kb.Services.AddSingleton(new RabbitMQConfiguration
+        {
+            AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
+        });
+
+        // ---------------------------------------------------------
+        // ✅ Azure OpenAI Client (correct credential)
         // ---------------------------------------------------------
         var azureClient = new AzureOpenAIClient(
             new Uri(aoaiEndpoint!),
@@ -64,9 +109,6 @@ if (azureConfigured)
 
         kb.Services.AddSingleton(azureClient);
 
-        // ---------------------------------------------------------
-        // Azure OpenAI Chat (explicit, no fallback)
-        // ---------------------------------------------------------
         var chatService = new AzureOpenAIChatCompletionService(
             chatDeploy,
             azureClient,
@@ -76,15 +118,12 @@ if (azureConfigured)
 
         kb.Services.AddSingleton<IChatCompletionService>(chatService);
 
-        // ---------------------------------------------------------
-        // Azure OpenAI Embeddings
-        // ---------------------------------------------------------
         kb.Services.AddSingleton<EmbeddingClient>(
             azureClient.GetEmbeddingClient(embedDeploy)
         );
 
         // ---------------------------------------------------------
-        // Vector Memory (RAG)
+        // ✅ Vector Memory (RAG)
         // ---------------------------------------------------------
         kb.Services.AddSingleton(new SupabaseConfig
         {
@@ -98,7 +137,7 @@ if (azureConfigured)
         kb.Services.AddScoped<IRagAgent, RagAgent>();
 
         // ---------------------------------------------------------
-        // Plugins (now IHttpClientFactory is resolvable ✅)
+        // ✅ Plugins (all dependencies now resolvable)
         // ---------------------------------------------------------
         kb.Plugins.AddFromType<SapPlugin>("SAP");
         kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
