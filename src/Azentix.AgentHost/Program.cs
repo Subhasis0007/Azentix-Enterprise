@@ -43,7 +43,7 @@ if (azureOpenAiConfigured)
     {
         var kernelBuilder = Kernel.CreateBuilder();
 
-        // ✅ REGISTER IHttpClientFactory INSIDE SK
+        // ✅ Register HttpClients INSIDE Semantic Kernel
         kernelBuilder.Services.AddHttpClient("SAP");
         kernelBuilder.Services.AddHttpClient("Salesforce");
         kernelBuilder.Services.AddHttpClient("ServiceNow");
@@ -51,13 +51,56 @@ if (azureOpenAiConfigured)
         kernelBuilder.Services.AddHttpClient("Stripe");
         kernelBuilder.Services.AddHttpClient("RabbitMQ");
 
+        // ✅ Register configuration objects INSIDE Semantic Kernel
+        kernelBuilder.Services.AddSingleton(new SapConfiguration
+        {
+            BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
+            ApiKey          = cfg["SAP_API_KEY"] ?? "",
+            System          = cfg["SAP_SYSTEM"] ?? "SANDBOX",
+            DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? "GB01"
+        });
+
+        kernelBuilder.Services.AddSingleton(new SalesforceConfiguration
+        {
+            InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
+            ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
+            ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
+            Username     = cfg["SALESFORCE_USERNAME"] ?? "",
+            Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
+        });
+
+        kernelBuilder.Services.AddSingleton(new ServiceNowConfiguration
+        {
+            InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
+            Username    = cfg["SERVICENOW_USERNAME"] ?? "",
+            Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
+        });
+
+        kernelBuilder.Services.AddSingleton(new HubSpotConfiguration
+        {
+            AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
+            PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
+            ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
+        });
+
+        kernelBuilder.Services.AddSingleton(new StripeConfiguration
+        {
+            SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
+        });
+
+        kernelBuilder.Services.AddSingleton(new RabbitMQConfiguration
+        {
+            AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
+        });
+
+        // ✅ Azure OpenAI
         kernelBuilder.AddAzureOpenAIChatCompletion(
             chatDeploy,
             aoaiEndpoint!,
             aoaiKey!
         );
 
-        // ✅ Plugins will now resolve IHttpClientFactory correctly
+        // ✅ Plugins
         kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
         kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
@@ -69,7 +112,6 @@ if (azureOpenAiConfigured)
         return kernelBuilder.Build();
     });
 }
-
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration objects
