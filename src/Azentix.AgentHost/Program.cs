@@ -10,16 +10,16 @@ using Azentix.Agents.Action;
 using Azentix.Agents.Plugins;
 using Azentix.Models;
 
-using Azure.AI.OpenAI;               // ✅ REQUIRED for embeddings
-using Azure;                         // ✅ REQUIRED for AzureKeyCredential
-using OpenAI.Embeddings;             // ✅ REQUIRED for EmbeddingClient
+using Azure;
+using Azure.AI.OpenAI;
+using OpenAI.Embeddings;
 
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ ASP.NET Core DI (for Controllers & Infrastructure)
+// ✅ ASP.NET Core DI (Controllers & Infrastructure)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddHttpClient();
@@ -29,10 +29,10 @@ builder.Services.AddHttpClient();
 // ✅ Azure OpenAI Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 //
-var aoaiEndpoint      = cfg["AZURE_OPENAI_ENDPOINT"];
-var aoaiKey           = cfg["AZURE_OPENAI_API_KEY"];
-var chatDeploy        = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
-var embeddingDeploy   = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
+var aoaiEndpoint    = cfg["AZURE_OPENAI_ENDPOINT"];
+var aoaiKey         = cfg["AZURE_OPENAI_API_KEY"];
+var chatDeploy      = cfg["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? "gpt-4o-mini";
+var embedDeploy     = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3-small";
 
 var azureOpenAiConfigured =
     !string.IsNullOrWhiteSpace(aoaiEndpoint) &&
@@ -40,12 +40,8 @@ var azureOpenAiConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL DI (CRITICAL PART)
+// ✅ SEMANTIC KERNEL (SAFE SDK BINDING)
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// RULE:
-// Anything in the Plugin → Agent → Memory → AI chain
-// MUST be registered here.
 //
 if (azureOpenAiConfigured)
 {
@@ -54,7 +50,7 @@ if (azureOpenAiConfigured)
         var kernelBuilder = Kernel.CreateBuilder();
 
         // ---------------------------------------------------------------------
-        // ✅ HttpClientFactory (required by plugins)
+        // ✅ HttpClients for Plugins
         // ---------------------------------------------------------------------
         kernelBuilder.Services.AddHttpClient("SAP");
         kernelBuilder.Services.AddHttpClient("Salesforce");
@@ -64,7 +60,7 @@ if (azureOpenAiConfigured)
         kernelBuilder.Services.AddHttpClient("RabbitMQ");
 
         // ---------------------------------------------------------------------
-        // ✅ Plugin Configuration Objects
+        // ✅ Plugin Configurations
         // ---------------------------------------------------------------------
         kernelBuilder.Services.AddSingleton(new SapConfiguration
         {
@@ -108,7 +104,7 @@ if (azureOpenAiConfigured)
         });
 
         // ---------------------------------------------------------------------
-        // ✅ SUPABASE (Vector Memory for RAG)
+        // ✅ Supabase Vector Memory (RAG)
         // ---------------------------------------------------------------------
         kernelBuilder.Services.AddSingleton(new SupabaseConfig
         {
@@ -119,34 +115,26 @@ if (azureOpenAiConfigured)
         });
 
         kernelBuilder.Services.AddSingleton<IVectorMemory, SupabaseVectorMemory>();
-
-        // ---------------------------------------------------------------------
-        // ✅ Azure OpenAI EMBEDDINGS (🔥 THIS WAS MISSING)
-        // REQUIRED by RagAgent → EmbeddingClient
-        // ---------------------------------------------------------------------
-        kernelBuilder.Services.AddSingleton<EmbeddingClient>(_ =>
-        {
-            var client = new AzureOpenAIClient(
-                new Uri(aoaiEndpoint!),
-                new AzureKeyCredential(aoaiKey!)
-            );
-
-            return client.GetEmbeddingClient(embeddingDeploy);
-        });
-
-        // ---------------------------------------------------------------------
-        // ✅ Agents used by Plugins (NOT controllers)
-        // ---------------------------------------------------------------------
         kernelBuilder.Services.AddScoped<IRagAgent, RagAgent>();
 
         // ---------------------------------------------------------------------
-        // ✅ Azure OpenAI Chat Completion
+        // ✅ Azure OpenAI Client (CRITICAL FIX)
         // ---------------------------------------------------------------------
-        kernelBuilder.AddAzureOpenAIChatCompletion(
-            chatDeploy,
-            aoaiEndpoint!,
-            aoaiKey!
-        );
+        kernelBuilder.Services.AddSingleton(new AzureOpenAIClient(
+            new Uri(aoaiEndpoint!),
+            new AzureKeyCredential(aoaiKey!)
+        ));
+
+        kernelBuilder.Services.AddSingleton<EmbeddingClient>(sp =>
+        {
+            var client = sp.GetRequiredService<AzureOpenAIClient>();
+            return client.GetEmbeddingClient(embedDeploy);
+        });
+
+        // ---------------------------------------------------------------------
+        // ✅ Chat Completion (SAFE OVERLOAD — NO INTERNAL CLIENT CREATION)
+        // ---------------------------------------------------------------------
+        kernelBuilder.AddAzureOpenAIChatCompletion(chatDeploy);
 
         // ---------------------------------------------------------------------
         // ✅ Plugins
@@ -165,7 +153,7 @@ if (azureOpenAiConfigured)
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ ASP.NET Core DI — Agents used by Controllers ONLY
+// ✅ ASP.NET Core DI — Controller Agents
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddScoped<IDirectorAgent, DirectorAgent>();
@@ -181,7 +169,7 @@ builder.Services.AddSingleton(new AgentConfiguration
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ Controllers & Pipeline
+// ✅ ASP.NET Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //
 builder.Services.AddControllers();
@@ -213,4 +201,3 @@ app.MapGet("/", () => new
 app.Run();
 
 public partial class Program { }
-
