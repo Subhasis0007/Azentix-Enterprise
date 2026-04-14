@@ -11,9 +11,9 @@ using Azentix.Agents.Memory;
 using Azentix.Agents.Plugins;
 using Azentix.Models;
 
-using Azure;
 using Azure.AI.OpenAI;
 using OpenAI.Embeddings;
+using System.ClientModel; // ✅ REQUIRED (ApiKeyCredential)
 
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
@@ -41,7 +41,7 @@ var azureConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL (EXPLICIT AZURE WIRING)
+// ✅ SEMANTIC KERNEL (EXPLICIT AZURE WIRING – CORRECT)
 // ─────────────────────────────────────────────────────────────
 //
 if (azureConfigured)
@@ -51,18 +51,18 @@ if (azureConfigured)
         var kb = Kernel.CreateBuilder();
 
         // ---------------------------------------------------------
-        // Azure OpenAI CLIENT (manual + safe)
-        // ---------------------------------------------------------
+        // ✅ Azure OpenAI CLIENT (CORRECT CREDENTIAL TYPE)
+// ---------------------------------------------------------
         var azureClient = new AzureOpenAIClient(
             new Uri(aoaiEndpoint!),
-            new AzureKeyCredential(aoaiKey!)
+            new ApiKeyCredential(aoaiKey!)
         );
 
         kb.Services.AddSingleton(azureClient);
 
         // ---------------------------------------------------------
-        // Azure OpenAI CHAT (NO SK FACTORY / NO FALLBACK)
-        // ---------------------------------------------------------
+        // ✅ Azure OpenAI CHAT (NO SK FACTORY / NO FALLBACK)
+// ---------------------------------------------------------
         var chatService = new AzureOpenAIChatCompletionService(
             chatDeploy,      // deploymentName
             azureClient,     // AzureOpenAIClient
@@ -73,15 +73,15 @@ if (azureConfigured)
         kb.Services.AddSingleton<IChatCompletionService>(chatService);
 
         // ---------------------------------------------------------
-        // Azure OpenAI EMBEDDINGS
-        // ---------------------------------------------------------
+        // ✅ Azure OpenAI EMBEDDINGS
+// ---------------------------------------------------------
         kb.Services.AddSingleton<EmbeddingClient>(
             azureClient.GetEmbeddingClient(embedDeploy)
         );
 
         // ---------------------------------------------------------
-        // Vector Memory (RAG)
-        // ---------------------------------------------------------
+        // ✅ Vector Memory (RAG)
+// ---------------------------------------------------------
         kb.Services.AddSingleton(new SupabaseConfig
         {
             Url                      = cfg["SUPABASE_URL"] ?? "",
@@ -94,8 +94,8 @@ if (azureConfigured)
         kb.Services.AddScoped<IRagAgent, RagAgent>();
 
         // ---------------------------------------------------------
-        // Plugins
-        // ---------------------------------------------------------
+        // ✅ Plugins
+// ---------------------------------------------------------
         kb.Plugins.AddFromType<SapPlugin>("SAP");
         kb.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kb.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
