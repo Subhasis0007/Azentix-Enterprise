@@ -2,6 +2,7 @@
 using Microsoft.SemanticKernel;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
+
 using Azentix.Agents.Director;
 using Azentix.Agents.Rag;
 using Azentix.Agents.Memory;
@@ -14,14 +15,18 @@ var cfg = builder.Configuration;
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ASP.NET CORE HTTP CLIENT (for controllers, etc.)
+// ✅ ASP.NET Core DI (for Controllers & Infrastructure)
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// NOTE:
+// These registrations are for MVC controllers, health checks, etc.
+// Semantic Kernel DOES NOT automatically see these.
 //
 builder.Services.AddHttpClient();
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Azure OpenAI configuration
+// ✅ Azure OpenAI Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 //
 var aoaiEndpoint = cfg["AZURE_OPENAI_ENDPOINT"];
@@ -34,8 +39,12 @@ var azureOpenAiConfigured =
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ SEMANTIC KERNEL (SUPPORTED DI REGISTRATION)
+// ✅ SEMANTIC KERNEL DI (CRITICAL PART)
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// IMPORTANT RULE:
+// Anything used by a *Plugin constructor OR its dependency chain*
+// MUST be registered here.
 //
 if (azureOpenAiConfigured)
 {
@@ -43,7 +52,9 @@ if (azureOpenAiConfigured)
     {
         var kernelBuilder = Kernel.CreateBuilder();
 
-        // ✅ Register HttpClients INSIDE Semantic Kernel
+        // ---------------------------------------------------------------------
+        // ✅ HttpClientFactory (plugins depend on IHttpClientFactory)
+        // ---------------------------------------------------------------------
         kernelBuilder.Services.AddHttpClient("SAP");
         kernelBuilder.Services.AddHttpClient("Salesforce");
         kernelBuilder.Services.AddHttpClient("ServiceNow");
@@ -51,7 +62,9 @@ if (azureOpenAiConfigured)
         kernelBuilder.Services.AddHttpClient("Stripe");
         kernelBuilder.Services.AddHttpClient("RabbitMQ");
 
-        // ✅ Register configuration objects INSIDE Semantic Kernel
+        // ---------------------------------------------------------------------
+        // ✅ Configuration objects (plugins REQUIRE these)
+        // ---------------------------------------------------------------------
         kernelBuilder.Services.AddSingleton(new SapConfiguration
         {
             BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
@@ -93,16 +106,43 @@ if (azureOpenAiConfigured)
             AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
         });
 
+        // ---------------------------------------------------------------------
+        // ✅ SUPABASE (RAG VECTOR MEMORY)
+        // ---------------------------------------------------------------------
+        // ADDED because RagAgent → IVectorMemory → SupabaseVectorMemory
+        //
+        kernelBuilder.Services.AddSingleton(new SupabaseConfig
+        {
+            Url                      = cfg["SUPABASE_URL"] ?? "",
+            AnonKey                  = cfg["SUPABASE_ANON_KEY"] ?? "",
+            ServiceKey               = cfg["SUPABASE_SERVICE_KEY"] ?? "",
+            DatabaseConnectionString = cfg["SUPABASE_DB_CONNECTION"] ?? ""
+        });
+
+        kernelBuilder.Services.AddSingleton<IVectorMemory, SupabaseVectorMemory>();
+
+        // ---------------------------------------------------------------------
+        // ✅ AGENTS USED BY PLUGINS (NOT controllers)
+        // ---------------------------------------------------------------------
+        //
+        // IMPORTANT:
+        // These must be registered INSIDE Semantic Kernel.
+        // DO NOT rely on ASP.NET Core DI for plugins.
+        //
         kernelBuilder.Services.AddScoped<IRagAgent, RagAgent>();
 
+        // ---------------------------------------------------------------------
         // ✅ Azure OpenAI
+        // ---------------------------------------------------------------------
         kernelBuilder.AddAzureOpenAIChatCompletion(
             chatDeploy,
             aoaiEndpoint!,
             aoaiKey!
         );
 
+        // ---------------------------------------------------------------------
         // ✅ Plugins
+        // ---------------------------------------------------------------------
         kernelBuilder.Plugins.AddFromType<SapPlugin>("SAP");
         kernelBuilder.Plugins.AddFromType<SalesforcePlugin>("Salesforce");
         kernelBuilder.Plugins.AddFromType<ServiceNowPlugin>("ServiceNow");
@@ -114,52 +154,16 @@ if (azureOpenAiConfigured)
         return kernelBuilder.Build();
     });
 }
+
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Configuration objects
+// ✅ ASP.NET Core Configuration Objects
 // ─────────────────────────────────────────────────────────────────────────────
 //
-builder.Services.AddSingleton(new SapConfiguration
-{
-    BaseUrl = cfg["SAP_BASE_URL"] ?? "",
-    ApiKey  = cfg["SAP_API_KEY"] ?? ""
-});
-
-builder.Services.AddSingleton(new SalesforceConfiguration
-{
-    InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
-    ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
-    ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
-    Username     = cfg["SALESFORCE_USERNAME"] ?? "",
-    Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
-});
-
-builder.Services.AddSingleton(new ServiceNowConfiguration
-{
-    InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
-    Username    = cfg["SERVICENOW_USERNAME"] ?? "",
-    Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
-});
-
-
-builder.Services.AddSingleton(new HubSpotConfiguration
-{
-    AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
-    PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
-    ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
-});
-
-
-builder.Services.AddSingleton(new StripeConfiguration
-{
-    SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
-});
-
-builder.Services.AddSingleton(new RabbitMQConfiguration
-{
-    AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
-});
-
+// NOTE:
+// These are ONLY for controllers / background services.
+// Plugins DO NOT see these — that’s intentional.
+//
 builder.Services.AddSingleton(new AgentConfiguration
 {
     MaxIterations         = int.Parse(cfg["AGENT_MAX_ITERATIONS"] ?? "10"),
@@ -171,27 +175,19 @@ builder.Services.AddSingleton(new AgentConfiguration
 
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// Agents
+// ✅ Controllers & Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 //
-builder.Services.AddScoped<IDirectorAgent, DirectorAgent>();
-builder.Services.AddScoped<IRagAgent, RagAgent>();
-builder.Services.AddScoped<IMemoryAgent, MemoryAgent>();
-builder.Services.AddScoped<IActionAgent, ActionAgent>();
-
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// Web + Health
-// ─────────────────────────────────────────────────────────────────────────────
-//
-builder.Services.AddHealthChecks()
-    .AddCheck("azure-openai",
-        () => azureOpenAiConfigured
-            ? HealthCheckResult.Healthy()
-            : HealthCheckResult.Unhealthy("Azure OpenAI not configured"));
-
 builder.Services.AddControllers();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddHealthChecks()
+    .AddCheck(
+        "azure-openai",
+        () => azureOpenAiConfigured
+            ? HealthCheckResult.Healthy()
+            : HealthCheckResult.Unhealthy("Azure OpenAI not configured")
+    );
 
 var app = builder.Build();
 
