@@ -114,12 +114,15 @@ builder.Services.AddSingleton<Kernel>(_ =>
     {
         AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
         PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
-        ApiBase     = cfg["HUBSPOT_API_BASE"] ?? ""
+        ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
     });
 
     kb.Services.AddSingleton(new StripeConfiguration
     {
-        SecretKey = cfg["STRIPE_SECRET_KEY"] ?? ""
+        SecretKey = cfg["STRIPE_SECRET_KEY"] ?? "",
+        ApiVersion = cfg["STRIPE_API_VERSION"] ?? "2024-06-20",
+        ApiBase = cfg["STRIPE_API_BASE"] ?? "https://api.stripe.com/v1",
+        WebhookSecret = cfg["STRIPE_WEBHOOK_SECRET"]
     });
 
     kb.Services.AddSingleton(new RabbitMQConfiguration

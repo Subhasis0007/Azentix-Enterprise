@@ -5,6 +5,7 @@ using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.Logging;
 using Azentix.Models;
+using Azentix.Agents.Rag;
 
 namespace Azentix.Agents.Director;
 
@@ -14,6 +15,11 @@ public class DirectorAgent : IDirectorAgent
     private readonly IChatCompletionService _chat;
     private readonly ILogger<DirectorAgent> _logger;
     private readonly AgentConfiguration _cfg;
+    private readonly SalesforceConfiguration _salesforceConfiguration;
+    private readonly ServiceNowConfiguration _serviceNowConfiguration;
+    private readonly HubSpotConfiguration _hubSpotConfiguration;
+    private readonly StripeConfiguration _stripeConfiguration;
+    private readonly bool _isRagEnabled;
 
     private const string SystemPrompt = @"You are Azentix Director — an enterprise AI agent.
 You connect SAP S/4HANA, Salesforce, ServiceNow, HubSpot, and Stripe.
@@ -29,18 +35,45 @@ Rules:
 - Validate data before writing
 - If confidence < 0.7 set status to HumanReviewRequired";
 
-    public DirectorAgent(Kernel kernel, ILogger<DirectorAgent> logger, AgentConfiguration cfg)
+    public DirectorAgent(
+        Kernel kernel,
+        ILogger<DirectorAgent> logger,
+        AgentConfiguration cfg,
+        SalesforceConfiguration salesforceConfiguration,
+        ServiceNowConfiguration serviceNowConfiguration,
+        HubSpotConfiguration hubSpotConfiguration,
+        StripeConfiguration stripeConfiguration,
+        IRagAgent ragAgent)
     {
         _kernel = kernel;
         _chat   = kernel.GetRequiredService<IChatCompletionService>();
         _logger = logger;
         _cfg    = cfg;
+        _salesforceConfiguration = salesforceConfiguration;
+        _serviceNowConfiguration = serviceNowConfiguration;
+        _hubSpotConfiguration = hubSpotConfiguration;
+        _stripeConfiguration = stripeConfiguration;
+        _isRagEnabled = ragAgent is not NoOpRagAgent;
     }
 
     public async Task<AgentResult> ExecuteAsync(AgentTask task, CancellationToken ct = default)
     {
         _logger.LogInformation("START {Id} | {Type} | {Pri}",
             task.TaskId, task.TaskType, task.Priority);
+
+        if (DirectorTaskRules.TryBuildPrevalidatedResult(
+            task,
+            _salesforceConfiguration,
+            _serviceNowConfiguration,
+            _hubSpotConfiguration,
+            _stripeConfiguration,
+            _isRagEnabled,
+            out var validationResult))
+        {
+            _logger.LogInformation("END {Id} | {Status} | prevalidated",
+                task.TaskId, validationResult!.Status);
+            return validationResult;
+        }
 
         var history = new ChatHistory();
         history.AddSystemMessage(SystemPrompt);
@@ -96,7 +129,7 @@ Rules:
                 if (text.Contains("Final Answer", StringComparison.OrdinalIgnoreCase))
                 {
                     result.FinalAnswer = Extract(text, "Final Answer:", null);
-                    result.Status = AgentStatus.Completed;
+                    result.Status = DirectorTaskRules.InferFinalStatus(text, result.FinalAnswer);
                     break;
                 }
 
