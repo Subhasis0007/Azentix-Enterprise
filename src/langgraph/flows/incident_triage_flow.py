@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 log = logging.getLogger(__name__)
 
-class IncidentState(TypedDict):
+class IncidentTriageState(TypedDict):
     incident_number:   str
     incident_sys_id:   Optional[str]
     short_description: Optional[str]
@@ -18,15 +18,22 @@ class IncidentState(TypedDict):
     current_priority:  Optional[str]
     category:          Optional[str]
     kb_articles:       Optional[str]
-    classification:    Optional[dict]
+    ai_classification: Optional[dict]
     action_taken:      Optional[str]
     audit_trail:       Annotated[List[dict], operator.add]
     final_status:      Optional[str]
     error:             Optional[str]
 
+# Backward-compatible alias for older imports.
+IncidentState = IncidentTriageState
+
 def _audit(node, action, result):
     return {"audit_trail": [{"ts": datetime.now(timezone.utc).isoformat(),
                               "node": node, "action": action, "result": result}]}
+
+
+def _get_classification(state):
+    return state.get("ai_classification") or state.get("classification") or {}
 
 def validate_node(state):
     if not state.get("incident_number"):
@@ -106,12 +113,12 @@ def classify_node(state, llm):
         cls = {"priority": state.get("current_priority","3"), "category": state.get("category","software"),
                "assignment_group": "Level2-Support", "auto_resolvable": False,
                "resolution_note": None, "confidence": 0.5}
-    return {"classification": cls,
+    return {"ai_classification": cls, "classification": cls,
             **_audit("classify", "CLASSIFIED",
                      f"P{cls['priority']} {cls['assignment_group']} conf={cls['confidence']:.2f}")}
 
 def auto_resolve_node(state, config):
-    cls    = state.get("classification", {})
+    cls    = _get_classification(state)
     sys_id = state.get("incident_sys_id","")
     note   = cls.get("resolution_note","Auto-resolved by Azentix agent based on KB match.")
     try:
@@ -127,7 +134,7 @@ def auto_resolve_node(state, config):
             **_audit("auto_resolve", "RESOLVED", f"Incident {state['incident_number']} closed")}
 
 def escalate_node(state, config):
-    cls    = state.get("classification", {})
+    cls    = _get_classification(state)
     sys_id = state.get("incident_sys_id","")
     try:
         requests.patch(f"{config['snow_url']}/api/now/table/incident/{sys_id}",
@@ -153,7 +160,7 @@ def escalate_node(state, config):
 
 def route_validate(s): return "end" if s.get("final_status")=="validation_failed" else "fetch_incident"
 def route_classify(s):
-    cls = s.get("classification",{})
+    cls = _get_classification(s)
     return ("auto_resolve"
             if cls.get("auto_resolvable") and float(cls.get("confidence",0)) >= 0.8
             else "escalate")
@@ -166,7 +173,7 @@ def compile_incident_triage(config: dict):
                           api_key=config["azure_key"],
                           azure_deployment="gpt-4o-mini",
                           api_version="2024-08-01-preview", temperature=0.05)
-    g = StateGraph(IncidentState)
+    g = StateGraph(IncidentTriageState)
     g.add_node("validate",      validate_node)
     g.add_node("fetch_incident", lambda s: fetch_incident_node(s, config))
     g.add_node("search_kb",      lambda s: search_kb_node(s, config))
@@ -193,7 +200,7 @@ if __name__ == "__main__":
     app = compile_incident_triage(config)
     result = app.invoke({"incident_number":"INC0001234","incident_sys_id":None,
         "short_description":None,"description":None,"current_priority":None,
-        "category":None,"kb_articles":None,"classification":None,
+        "category":None,"kb_articles":None,"ai_classification":None,
         "action_taken":None,"audit_trail":[],"final_status":None,"error":None},
         config={"configurable":{"thread_id":"triage-001"}})
     print(f"Status: {result['final_status']} | Action: {result.get('action_taken')}")
