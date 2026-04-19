@@ -29,29 +29,52 @@ KNOWLEDGE = [
 ]
 
 def main():
-    from openai import AzureOpenAI
+    from openai import AzureOpenAI, OpenAI
     import psycopg2
     from pgvector.psycopg2 import register_vector
 
+    provider = (os.getenv("MODEL_PROVIDER", "azure") or "azure").strip().lower()
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     azure_key      = os.getenv("AZURE_OPENAI_API_KEY")
+    azure_embed_model = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
+
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    ollama_api_key  = os.getenv("OLLAMA_API_KEY", "ollama")
+    ollama_embed_model = os.getenv("OLLAMA_EMBED_MODEL", "")
+
     db_conn_str    = os.getenv("SUPABASE_DB_CONNECTION")
 
-    if not all([azure_endpoint, azure_key, db_conn_str]):
-        print("ERROR: Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, SUPABASE_DB_CONNECTION")
+    if provider not in ("azure", "ollama"):
+        print("ERROR: MODEL_PROVIDER must be 'azure' or 'ollama'")
         sys.exit(1)
 
-    client = AzureOpenAI(azure_endpoint=azure_endpoint,
-                         api_key=azure_key, api_version="2024-08-01-preview")
+    if not db_conn_str:
+        print("ERROR: SUPABASE_DB_CONNECTION is required")
+        sys.exit(1)
+
+    if provider == "azure":
+        if not all([azure_endpoint, azure_key]):
+            print("ERROR: Azure mode requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY")
+            sys.exit(1)
+        embed_model = azure_embed_model
+        client = AzureOpenAI(azure_endpoint=azure_endpoint,
+                             api_key=azure_key, api_version="2024-08-01-preview")
+    else:
+        if not ollama_embed_model:
+            print("ERROR: Ollama mode requires OLLAMA_EMBED_MODEL")
+            sys.exit(1)
+        embed_model = ollama_embed_model
+        client = OpenAI(base_url=ollama_base_url, api_key=ollama_api_key)
+
     conn   = psycopg2.connect(db_conn_str)
     register_vector(conn)
     cur    = conn.cursor()
 
-    print(f"Ingesting {len(KNOWLEDGE)} articles into Supabase pgvector...\n")
+    print(f"Ingesting {len(KNOWLEDGE)} articles into Supabase pgvector with provider={provider} model={embed_model}...\n")
     for i, doc in enumerate(KNOWLEDGE, 1):
         print(f"  [{i}/{len(KNOWLEDGE)}] {doc['collection']} / {doc['source']}")
         embedding = client.embeddings.create(
-            model="text-embedding-3-small", input=doc["content"]).data[0].embedding
+            model=embed_model, input=doc["content"]).data[0].embedding
         doc_id = str(uuid.uuid5(uuid.NAMESPACE_DNS,
                                 doc["collection"] + doc["content"][:60]))
         cur.execute("""

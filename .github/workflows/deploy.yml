@@ -17,6 +17,11 @@ on:
           - dev
           - staging
           - prod
+      use_offline_model:
+        description: Use offline model mode (Ollama)
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -31,6 +36,7 @@ jobs:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
       CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
+      MODEL_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.use_offline_model == 'true' && 'ollama' || 'azure' }}
 
     steps:
       - name: Checkout repository
@@ -38,6 +44,8 @@ jobs:
 
       - name: Trigger Render deployment
         run: |
+          echo "Selected MODEL_PROVIDER=$MODEL_PROVIDER"
+
           if [ -z "$RENDER_SERVICE_ID" ] || [ -z "$RENDER_API_KEY" ]; then
             echo "⚠️ Render secrets not configured — skipping deploy trigger."
             exit 0

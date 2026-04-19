@@ -1,4 +1,3 @@
-using Azure.AI.OpenAI;
 using OpenAI.Embeddings;
 using Microsoft.Extensions.Logging;
 using Azentix.Agents.Memory;
@@ -34,4 +33,12 @@ public class RagAgent : IRagAgent
         return string.Join("\n\n", results.Select((r, i) =>
             $"[{i+1}] Relevance:{r.Relevance:P0} | Source:{r.Source}\n{r.Text}"));
     }
+}
+
+public class NoOpRagAgent : IRagAgent
+{
+    public Task<string> SearchAsync(string query, string collection = "default",
+        int topK = 5, CancellationToken ct = default)
+        => Task.FromResult(
+            "RAG is disabled for the current model provider. Configure embeddings (AZURE_OPENAI_EMBEDDING_DEPLOYMENT or OLLAMA_EMBED_MODEL) to enable vector search.");
 }

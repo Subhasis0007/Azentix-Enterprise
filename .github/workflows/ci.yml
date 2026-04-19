@@ -6,10 +6,17 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      use_offline_model:
+        description: Use offline model mode (Ollama)
+        required: true
+        default: false
+        type: boolean
 
 env:
   DOTNET_VERSION: "8.0.x"
   PYTHON_VERSION: "3.11"
+  MODEL_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.use_offline_model == 'true' && 'ollama' || 'azure' }}
 
 jobs:
 
@@ -126,14 +133,21 @@ jobs:
 
       - name: Smoke test — container starts and /health responds
         run: |
+          echo "Selected MODEL_PROVIDER=$MODEL_PROVIDER"
+
           docker run -d \
             --name azentix-smoke \
             -p 5001:5000 \
             -e ASPNETCORE_URLS="http://+:5000" \
+            -e MODEL_PROVIDER="$MODEL_PROVIDER" \
             -e AZURE_OPENAI_ENDPOINT="https://placeholder.openai.azure.com/" \
             -e AZURE_OPENAI_API_KEY="placeholder-key-32chars-xxxxxxxxxx" \
             -e AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini" \
             -e AZURE_OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-small" \
+            -e OLLAMA_BASE_URL="http://localhost:11434/v1" \
+            -e OLLAMA_API_KEY="ollama" \
+            -e OLLAMA_CHAT_MODEL="qwen3:8b" \
+            -e OLLAMA_EMBED_MODEL="nomic-embed-text" \
             -e SUPABASE_URL="https://placeholder.supabase.co" \
             -e SUPABASE_ANON_KEY="placeholder-anon-key" \
             -e SUPABASE_SERVICE_KEY="placeholder-service-key" \

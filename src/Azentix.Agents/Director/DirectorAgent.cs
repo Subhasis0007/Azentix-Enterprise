@@ -2,6 +2,7 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
+using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.Logging;
 using Azentix.Models;
 
@@ -61,14 +62,20 @@ Rules:
 
             try
             {
-                var settings = new AzureOpenAIPromptExecutionSettings
-                {
-                    MaxTokens = _cfg.MaxTokensPerIteration,
-                    Temperature = 0.1,
-
-                    // ✅ CORRECT modern API (replacement for ToolCallBehavior)
-                    FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
-                };
+                PromptExecutionSettings settings =
+                    _cfg.ModelProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
+                        ? new OpenAIPromptExecutionSettings
+                        {
+                            MaxTokens = _cfg.MaxTokensPerIteration,
+                            Temperature = 0.1,
+                            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+                        }
+                        : new AzureOpenAIPromptExecutionSettings
+                        {
+                            MaxTokens = _cfg.MaxTokensPerIteration,
+                            Temperature = 0.1,
+                            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto()
+                        };
 
                 var response = await _chat.GetChatMessageContentAsync(
                     history, settings, _kernel, ct);
