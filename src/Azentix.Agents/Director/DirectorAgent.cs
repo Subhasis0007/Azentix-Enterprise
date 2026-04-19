@@ -90,6 +90,7 @@ Rules:
         while (iter < _cfg.MaxIterations)
         {
             iter++;
+            _logger.LogInformation("ITER {Id} | {Iter}", task.TaskId, iter);
 
             try
             {
@@ -114,15 +115,27 @@ Rules:
                 var text = response.Content ?? string.Empty;
                 history.AddAssistantMessage(text);
 
+                var thought = Extract(text, "Thought:", "Action:");
+                var action = Extract(text, "Action:",  "Observation:");
+                var observation = Extract(text, "Observation:", "Final Answer:");
+
                 result.AuditTrail.Add(new AuditEntry
                 {
                     Iteration    = iter,
                     Timestamp    = DateTime.UtcNow,
-                    AgentThought = Extract(text, "Thought:", "Action:"),
-                    AgentAction  = Extract(text, "Action:",  "Observation:"),
+                    AgentThought = thought,
+                    AgentAction  = action,
+                    ActionResult = observation,
                     TokensUsed   = response.Metadata?
                         .GetValueOrDefault("CompletionUsage")?.ToString() ?? "?"
                 });
+
+                _logger.LogInformation("ITER {Id} | {Iter} | Thought={Thought} | Action={Action} | Observation={Observation}",
+                    task.TaskId,
+                    iter,
+                    thought,
+                    action,
+                    observation);
 
                 if (text.Contains("Final Answer", StringComparison.OrdinalIgnoreCase))
                 {
@@ -137,7 +150,7 @@ Rules:
             {
                 _logger.LogError(ex, "Error at iteration {Iter}", iter);
                 result.Status       = AgentStatus.Failed;
-                result.ErrorMessage = ex.Message;
+                result.ErrorMessage = ex.ToString();
                 break;
             }
         }

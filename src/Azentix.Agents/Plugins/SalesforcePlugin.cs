@@ -25,12 +25,56 @@ public class SalesforcePlugin
         [Description("Product name or Salesforce ID")] string identifier,
         [Description("true if a Salesforce record ID")] bool isId = false)
     {
+        _log.LogInformation("Salesforce GetProduct start | Identifier={Identifier} | IsId={IsId}", identifier, isId);
         await EnsureAuthAsync();
         var url = isId
             ? $"{_instanceUrl}/services/data/{_cfg.ApiVersion}/sobjects/Product2/{identifier}?fields=Id,Name,ProductCode,IsActive"
             : $"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString($"SELECT Id,Name,ProductCode,IsActive FROM Product2 WHERE Name LIKE '%{identifier}%' LIMIT 5")}";
+
         var resp = await _http.GetAsync(url);
-        return await resp.Content.ReadAsStringAsync();
+        var body = await resp.Content.ReadAsStringAsync();
+        _log.LogInformation("Salesforce GetProduct response | Status={Status} | Identifier={Identifier} | BodySnippet={BodySnippet}",
+            (int)resp.StatusCode,
+            identifier,
+            TruncateForLog(body));
+
+        if (resp.IsSuccessStatusCode)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                resource = "Product2",
+                queryType = isId ? "by_id" : "by_name",
+                identifier,
+                statusCode = (int)resp.StatusCode,
+                data = ParseJsonOrRaw(body)
+            });
+        }
+
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                errorCode = "product_not_found",
+                resource = "Product2",
+                queryType = isId ? "by_id" : "by_name",
+                identifier,
+                statusCode = (int)resp.StatusCode,
+                details = ParseJsonOrRaw(body)
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            success = false,
+            errorCode = "salesforce_api_error",
+            resource = "Product2",
+            queryType = isId ? "by_id" : "by_name",
+            identifier,
+            statusCode = (int)resp.StatusCode,
+            details = ParseJsonOrRaw(body)
+        });
     }
 
     [KernelFunction("salesforce_get_pricebook")]
@@ -38,10 +82,77 @@ public class SalesforcePlugin
     public async Task<string> GetPricebookAsync(
         [Description("Salesforce Product2 ID")] string productId)
     {
+        _log.LogInformation("Salesforce GetPricebook start | ProductId={ProductId}", productId);
         await EnsureAuthAsync();
         var q = $"SELECT Id,UnitPrice,CurrencyIsoCode,IsActive FROM PricebookEntry WHERE Product2Id='{productId}' AND Pricebook2.IsStandard=true AND IsActive=true LIMIT 1";
         var resp = await _http.GetAsync($"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString(q)}");
-        return await resp.Content.ReadAsStringAsync();
+        var body = await resp.Content.ReadAsStringAsync();
+        _log.LogInformation("Salesforce GetPricebook response | Status={Status} | ProductId={ProductId} | BodySnippet={BodySnippet}",
+            (int)resp.StatusCode,
+            productId,
+            TruncateForLog(body));
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                errorCode = "salesforce_api_error",
+                resource = "PricebookEntry",
+                productId,
+                statusCode = (int)resp.StatusCode,
+                details = ParseJsonOrRaw(body)
+            });
+        }
+
+        JsonElement payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<JsonElement>(body);
+        }
+        catch
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                errorCode = "invalid_salesforce_response",
+                resource = "PricebookEntry",
+                productId,
+                statusCode = (int)resp.StatusCode,
+                details = body
+            });
+        }
+
+        var totalSize = payload.TryGetProperty("totalSize", out var totalSizeElement)
+            ? totalSizeElement.GetInt32()
+            : 0;
+
+        _log.LogInformation("Salesforce GetPricebook parsed | ProductId={ProductId} | TotalSize={TotalSize}",
+            productId,
+            totalSize);
+
+        if (totalSize == 0)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                errorCode = "pricebook_entry_not_found",
+                resource = "PricebookEntry",
+                productId,
+                statusCode = (int)resp.StatusCode,
+                message = "No active Standard PricebookEntry found for the provided Product2 ID.",
+                data = payload
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            resource = "PricebookEntry",
+            productId,
+            statusCode = (int)resp.StatusCode,
+            data = payload
+        });
     }
 
     [KernelFunction("salesforce_update_price")]
@@ -52,6 +163,11 @@ public class SalesforcePlugin
         [Description("Currency ISO code")] string currency = "GBP",
         [Description("SAP material number for audit")] string? sapMaterial = null)
     {
+        _log.LogInformation("Salesforce UpdatePrice start | PricebookEntryId={PricebookEntryId} | NewPrice={NewPrice} | Currency={Currency} | SapMaterial={SapMaterial}",
+            pricebookEntryId,
+            newPrice,
+            currency,
+            sapMaterial ?? "");
         await EnsureAuthAsync();
         var body = JsonSerializer.Serialize(new {
             UnitPrice = newPrice,
@@ -62,9 +178,16 @@ public class SalesforcePlugin
             $"{_instanceUrl}/services/data/{_cfg.ApiVersion}/sobjects/PricebookEntry/{pricebookEntryId}");
         req.Content = new StringContent(body, Encoding.UTF8, "application/json");
         var resp = await _http.SendAsync(req);
+        var responseBody = await resp.Content.ReadAsStringAsync();
+        _log.LogInformation("Salesforce UpdatePrice response | Status={Status} | PricebookEntryId={PricebookEntryId} | BodySnippet={BodySnippet}",
+            (int)resp.StatusCode,
+            pricebookEntryId,
+            TruncateForLog(responseBody));
         return JsonSerializer.Serialize(new {
             success = resp.IsSuccessStatusCode,
             pricebookEntryId, newPrice, currency, sapMaterial,
+            statusCode = (int)resp.StatusCode,
+            details = ParseJsonOrRaw(responseBody),
             syncedAt = DateTime.UtcNow });
     }
 
@@ -114,7 +237,13 @@ public class SalesforcePlugin
     private async Task EnsureAuthAsync()
     {
         if (_token is not null) return;
-        var resp = await _http.PostAsync("https://login.salesforce.com/services/oauth2/token",
+
+        var authBaseUrl = ResolveAuthBaseUrl();
+        _log.LogInformation("Salesforce auth start | AuthBaseUrl={AuthBaseUrl} | InstanceUrl={InstanceUrl} | Username={Username}",
+            authBaseUrl,
+            _cfg.InstanceUrl,
+            _cfg.Username);
+        var resp = await _http.PostAsync($"{authBaseUrl}/services/oauth2/token",
             new FormUrlEncodedContent(new Dictionary<string, string> {
                 ["grant_type"]    = "password",
                 ["client_id"]     = _cfg.ClientId,
@@ -122,12 +251,82 @@ public class SalesforcePlugin
                 ["username"]      = _cfg.Username,
                 ["password"]      = _cfg.Password
             }));
-        var json  = JsonSerializer.Deserialize<JsonElement>(
-            await resp.Content.ReadAsStringAsync());
-        _token       = json.GetProperty("access_token").GetString();
+        var body = await resp.Content.ReadAsStringAsync();
+        _log.LogInformation("Salesforce auth response | Status={Status} | BodySnippet={BodySnippet}",
+            (int)resp.StatusCode,
+            TruncateForLog(body));
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Salesforce authentication failed with status {(int)resp.StatusCode}. Response: {body}");
+        }
+
+        JsonElement json;
+        try
+        {
+            json = JsonSerializer.Deserialize<JsonElement>(body);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Salesforce authentication returned a non-JSON response. Body: {body}", ex);
+        }
+
+        if (!json.TryGetProperty("access_token", out var tokenElement))
+        {
+            throw new InvalidOperationException(
+                $"Salesforce authentication response does not contain access_token. Response: {body}");
+        }
+
+        _token = tokenElement.GetString();
         _instanceUrl = json.TryGetProperty("instance_url", out var iu)
             ? iu.GetString() : _cfg.InstanceUrl;
+
+        if (string.IsNullOrWhiteSpace(_token) || string.IsNullOrWhiteSpace(_instanceUrl))
+        {
+            throw new InvalidOperationException(
+                "Salesforce authentication returned an empty token or instance URL.");
+        }
+
         _http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
+        _log.LogInformation("Salesforce auth complete | InstanceUrl={InstanceUrl}", _instanceUrl);
+    }
+
+    private string ResolveAuthBaseUrl()
+    {
+        if (!Uri.TryCreate(_cfg.InstanceUrl, UriKind.Absolute, out var uri))
+            return "https://login.salesforce.com";
+
+        var host = uri.Host;
+        if (host.Contains("sandbox", StringComparison.OrdinalIgnoreCase) ||
+            host.Contains("cs", StringComparison.OrdinalIgnoreCase))
+            return "https://test.salesforce.com";
+
+        return "https://login.salesforce.com";
+    }
+
+    private static object ParseJsonOrRaw(string value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(value);
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    private static string TruncateForLog(string? text, int max = 400)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var normalized = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        return normalized.Length <= max
+            ? normalized
+            : normalized[..max] + "...";
     }
 }
