@@ -69,6 +69,66 @@ if (useOllama && !ollamaConfigured)
     throw new InvalidOperationException(
         "MODEL_PROVIDER=ollama selected, but OLLAMA_BASE_URL or OLLAMA_CHAT_MODEL is missing.");
 
+var sapConfiguration = new SapConfiguration
+{
+    BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
+    ApiKey          = cfg["SAP_API_KEY"] ?? "",
+    System          = cfg["SAP_SYSTEM"] ?? "",
+    DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? ""
+};
+
+var salesforceConfiguration = new SalesforceConfiguration
+{
+    InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
+    ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
+    ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
+    Username     = cfg["SALESFORCE_USERNAME"] ?? "",
+    Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
+};
+
+var serviceNowConfiguration = new ServiceNowConfiguration
+{
+    InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
+    Username    = cfg["SERVICENOW_USERNAME"] ?? "",
+    Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
+};
+
+var hubSpotConfiguration = new HubSpotConfiguration
+{
+    AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
+    PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
+    ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
+};
+
+var stripeConfiguration = new StripeConfiguration
+{
+    SecretKey = cfg["STRIPE_SECRET_KEY"] ?? "",
+    ApiVersion = cfg["STRIPE_API_VERSION"] ?? "2024-06-20",
+    ApiBase = cfg["STRIPE_API_BASE"] ?? "https://api.stripe.com/v1",
+    WebhookSecret = cfg["STRIPE_WEBHOOK_SECRET"]
+};
+
+var rabbitMqConfiguration = new RabbitMQConfiguration
+{
+    AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
+};
+
+var supabaseConfiguration = new SupabaseConfig
+{
+    Url                      = cfg["SUPABASE_URL"] ?? "",
+    AnonKey                  = cfg["SUPABASE_ANON_KEY"] ?? "",
+    ServiceKey               = cfg["SUPABASE_SERVICE_KEY"] ?? "",
+    DatabaseConnectionString = cfg["SUPABASE_DB_CONNECTION"] ?? ""
+};
+
+builder.Services.AddSingleton(sapConfiguration);
+builder.Services.AddSingleton(salesforceConfiguration);
+builder.Services.AddSingleton(serviceNowConfiguration);
+builder.Services.AddSingleton(hubSpotConfiguration);
+builder.Services.AddSingleton(stripeConfiguration);
+builder.Services.AddSingleton(rabbitMqConfiguration);
+builder.Services.AddSingleton(supabaseConfiguration);
+
 //
 // ─────────────────────────────────────────────────────────────
 // ✅ SEMANTIC KERNEL (PLUGIN-SAFE DI)
@@ -86,60 +146,17 @@ builder.Services.AddSingleton<Kernel>(_ =>
     // ---------------------------------------------------------
     // ✅ Plugin Configurations (CRITICAL FIX)
     // ---------------------------------------------------------
-    kb.Services.AddSingleton(new SapConfiguration
-    {
-        BaseUrl         = cfg["SAP_BASE_URL"] ?? "",
-        ApiKey          = cfg["SAP_API_KEY"] ?? "",
-        System          = cfg["SAP_SYSTEM"] ?? "",
-        DefaultSalesOrg = cfg["SAP_DEFAULT_SALES_ORG"] ?? ""
-    });
-
-    kb.Services.AddSingleton(new SalesforceConfiguration
-    {
-        InstanceUrl  = cfg["SALESFORCE_INSTANCE_URL"] ?? "",
-        ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
-        ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
-        Username     = cfg["SALESFORCE_USERNAME"] ?? "",
-        Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
-    });
-
-    kb.Services.AddSingleton(new ServiceNowConfiguration
-    {
-        InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
-        Username    = cfg["SERVICENOW_USERNAME"] ?? "",
-        Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
-    });
-
-    kb.Services.AddSingleton(new HubSpotConfiguration
-    {
-        AccessToken = cfg["HUBSPOT_ACCESS_TOKEN"] ?? "",
-        PortalId    = cfg["HUBSPOT_PORTAL_ID"] ?? "",
-        ApiBase     = cfg["HUBSPOT_API_BASE"] ?? "https://api.hubapi.com"
-    });
-
-    kb.Services.AddSingleton(new StripeConfiguration
-    {
-        SecretKey = cfg["STRIPE_SECRET_KEY"] ?? "",
-        ApiVersion = cfg["STRIPE_API_VERSION"] ?? "2024-06-20",
-        ApiBase = cfg["STRIPE_API_BASE"] ?? "https://api.stripe.com/v1",
-        WebhookSecret = cfg["STRIPE_WEBHOOK_SECRET"]
-    });
-
-    kb.Services.AddSingleton(new RabbitMQConfiguration
-    {
-        AmqpUrl = cfg["CLOUDAMQP_URL"] ?? ""
-    });
+    kb.Services.AddSingleton(sapConfiguration);
+    kb.Services.AddSingleton(salesforceConfiguration);
+    kb.Services.AddSingleton(serviceNowConfiguration);
+    kb.Services.AddSingleton(hubSpotConfiguration);
+    kb.Services.AddSingleton(stripeConfiguration);
+    kb.Services.AddSingleton(rabbitMqConfiguration);
 
     // ---------------------------------------------------------
     // ✅ Shared Supabase configuration for RAG
     // ---------------------------------------------------------
-    kb.Services.AddSingleton(new SupabaseConfig
-    {
-        Url                      = cfg["SUPABASE_URL"] ?? "",
-        AnonKey                  = cfg["SUPABASE_ANON_KEY"] ?? "",
-        ServiceKey               = cfg["SUPABASE_SERVICE_KEY"] ?? "",
-        DatabaseConnectionString = cfg["SUPABASE_DB_CONNECTION"] ?? ""
-    });
+    kb.Services.AddSingleton(supabaseConfiguration);
 
     kb.Services.AddSingleton<IVectorMemory, SupabaseVectorMemory>();
 
@@ -232,7 +249,10 @@ builder.Services.AddSingleton(new AgentConfiguration
     MaxTokensPerIteration = int.Parse(cfg["AGENT_MAX_TOKENS"] ?? "2000"),
     TokenBudget     = int.Parse(cfg["AGENT_TOKEN_BUDGET"] ?? "16000"),
     ModelProvider   = requestedProvider,
-    ModelDeployment = useAzure ? chatDeploy : ollamaChatModel
+    ModelDeployment = useAzure ? chatDeploy : ollamaChatModel,
+    RagEnabled      = useAzure
+        ? !string.IsNullOrWhiteSpace(embedDeploy)
+        : !string.IsNullOrWhiteSpace(ollamaEmbedModel)
 });
 
 //

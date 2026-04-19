@@ -5,7 +5,6 @@ using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.Logging;
 using Azentix.Models;
-using Azentix.Agents.Rag;
 
 namespace Azentix.Agents.Director;
 
@@ -42,8 +41,7 @@ Rules:
         SalesforceConfiguration salesforceConfiguration,
         ServiceNowConfiguration serviceNowConfiguration,
         HubSpotConfiguration hubSpotConfiguration,
-        StripeConfiguration stripeConfiguration,
-        IRagAgent ragAgent)
+        StripeConfiguration stripeConfiguration)
     {
         _kernel = kernel;
         _chat   = kernel.GetRequiredService<IChatCompletionService>();
@@ -53,7 +51,7 @@ Rules:
         _serviceNowConfiguration = serviceNowConfiguration;
         _hubSpotConfiguration = hubSpotConfiguration;
         _stripeConfiguration = stripeConfiguration;
-        _isRagEnabled = ragAgent is not NoOpRagAgent;
+        _isRagEnabled = cfg.RagEnabled;
     }
 
     public async Task<AgentResult> ExecuteAsync(AgentTask task, CancellationToken ct = default)

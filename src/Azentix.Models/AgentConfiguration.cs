@@ -9,4 +9,5 @@ public record AgentConfiguration
     public int TokenBudget { get; init; } = 16000;
     public string ModelProvider { get; init; } = "azure";
     public string ModelDeployment { get; init; } = "gpt-4o-mini";
+    public bool RagEnabled { get; init; }
 }
