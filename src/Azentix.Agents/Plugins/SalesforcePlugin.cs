@@ -2,6 +2,7 @@ using Microsoft.SemanticKernel;
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
+using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using Azentix.Models;
 
@@ -238,20 +239,51 @@ public class SalesforcePlugin
     {
         if (_token is not null) return;
 
-        var authBaseUrl = ResolveAuthBaseUrl();
         var authMode = NormalizeAuthMode(_cfg.AuthMode);
-        _log.LogInformation("Salesforce auth start | AuthMode={AuthMode} | AuthBaseUrl={AuthBaseUrl} | InstanceUrl={InstanceUrl} | Username={Username}",
+        var authBaseUrls = GetAuthBaseUrlCandidates();
+        _log.LogInformation("Salesforce auth start | AuthMode={AuthMode} | AuthBaseUrls={AuthBaseUrls} | InstanceUrl={InstanceUrl} | Username={Username}",
             authMode,
-            authBaseUrl,
+            string.Join(",", authBaseUrls),
             _cfg.InstanceUrl,
             _cfg.Username);
 
-        AuthResponse? authResponse = authMode switch
+        AuthResponse? authResponse = null;
+        var failures = new List<string>();
+
+        foreach (var authBaseUrl in authBaseUrls)
         {
-            "password" => await AuthenticateWithPasswordGrantAsync(authBaseUrl),
-            "client_credentials" => await AuthenticateWithClientCredentialsAsync(authBaseUrl),
-            _ => await AuthenticateWithAutoFallbackAsync(authBaseUrl)
-        };
+            try
+            {
+                authResponse = authMode switch
+                {
+                    "password" => await AuthenticateWithPasswordGrantAsync(authBaseUrl),
+                    "client_credentials" => await AuthenticateWithClientCredentialsAsync(authBaseUrl),
+                    _ => await AuthenticateWithAutoFallbackAsync(authBaseUrl)
+                };
+
+                _log.LogInformation("Salesforce auth succeeded | AuthMode={AuthMode} | AuthBaseUrl={AuthBaseUrl}",
+                    authMode,
+                    authBaseUrl);
+                break;
+            }
+            catch (Exception ex)
+            {
+                var errorSummary = SummarizeAuthException(ex);
+                failures.Add($"{authBaseUrl}: {errorSummary}");
+                _log.LogWarning(ex,
+                    "Salesforce auth failed | AuthMode={AuthMode} | AuthBaseUrl={AuthBaseUrl} | Error={Error}",
+                    authMode,
+                    authBaseUrl,
+                    errorSummary);
+            }
+        }
+
+        if (authResponse is null)
+        {
+            throw new InvalidOperationException(
+                "Salesforce authentication failed for all configured auth endpoints. " +
+                string.Join(" | ", failures));
+        }
 
         _token = authResponse.AccessToken;
         _instanceUrl = string.IsNullOrWhiteSpace(authResponse.InstanceUrl)
@@ -271,20 +303,68 @@ public class SalesforcePlugin
             _instanceUrl);
     }
 
-    private string ResolveAuthBaseUrl()
+    private List<string> GetAuthBaseUrlCandidates()
     {
+        var candidates = new List<string>();
+
         if (!string.IsNullOrWhiteSpace(_cfg.AuthBaseUrl))
-            return _cfg.AuthBaseUrl.TrimEnd('/');
+            candidates.Add(_cfg.AuthBaseUrl.Trim().TrimEnd('/'));
 
-        if (!Uri.TryCreate(_cfg.InstanceUrl, UriKind.Absolute, out var uri))
-            return "https://login.salesforce.com";
+        if (Uri.TryCreate(_cfg.InstanceUrl, UriKind.Absolute, out var instanceUri))
+        {
+            candidates.Add($"{instanceUri.Scheme}://{instanceUri.Host}".TrimEnd('/'));
 
-        var host = uri.Host;
-        if (host.Contains("sandbox", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("cs", StringComparison.OrdinalIgnoreCase))
-            return "https://test.salesforce.com";
+            var host = instanceUri.Host;
+            if (host.Contains("sandbox", StringComparison.OrdinalIgnoreCase) ||
+                host.StartsWith("cs", StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add("https://test.salesforce.com");
+                candidates.Add("https://login.salesforce.com");
+            }
+            else
+            {
+                candidates.Add("https://login.salesforce.com");
+                candidates.Add("https://test.salesforce.com");
+            }
+        }
+        else
+        {
+            candidates.Add("https://login.salesforce.com");
+            candidates.Add("https://test.salesforce.com");
+        }
 
-        return "https://login.salesforce.com";
+        return candidates
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string SummarizeAuthException(Exception ex)
+    {
+        var socket = FindInnerException<SocketException>(ex);
+        if (socket is not null)
+            return $"network error ({socket.SocketErrorCode})";
+
+        var http = FindInnerException<HttpRequestException>(ex);
+        if (http is not null)
+            return $"http request failed ({http.Message})";
+
+        return ex.Message;
+    }
+
+    private static TException? FindInnerException<TException>(Exception ex)
+        where TException : Exception
+    {
+        Exception? current = ex;
+        while (current is not null)
+        {
+            if (current is TException typed)
+                return typed;
+
+            current = current.InnerException;
+        }
+
+        return null;
     }
 
     private async Task<AuthResponse> AuthenticateWithAutoFallbackAsync(string authBaseUrl)
