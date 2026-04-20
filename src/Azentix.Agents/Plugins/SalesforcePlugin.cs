@@ -295,6 +295,30 @@ public class SalesforcePlugin
         });
     }
 
+    [KernelFunction("salesforce_update_account")]
+    [Description("Update a Salesforce Account record with the given fields (JSON object).")]
+    public async Task<string> UpdateAccountAsync(
+        [Description("Salesforce Account ID (001...)")] string accountId,
+        [Description("JSON object with Account fields to update, e.g. {\"Description\":\"...\"}")] string fieldsJson)
+    {
+        await EnsureAuthAsync();
+        var url = $"{_instanceUrl}/services/data/{_cfg.ApiVersion}/sobjects/Account/{accountId}";
+        var req = new HttpRequestMessage(HttpMethod.Patch, url)
+        {
+            Content = new StringContent(fieldsJson, Encoding.UTF8, "application/json")
+        };
+        var resp = await _http.SendAsync(req);
+        var body = await resp.Content.ReadAsStringAsync();
+        return JsonSerializer.Serialize(new
+        {
+            success = resp.IsSuccessStatusCode,
+            resource = "Account",
+            accountId,
+            statusCode = (int)resp.StatusCode,
+            details = string.IsNullOrWhiteSpace(body) ? (object)"(no body)" : ParseJsonOrRaw(body)
+        });
+    }
+
     private async Task EnsureAuthAsync()
     {
         if (_token is not null) return;

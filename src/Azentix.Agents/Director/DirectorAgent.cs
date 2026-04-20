@@ -577,6 +577,37 @@ Rules:
         var salesforceSuccess = IsSuccessfulSalesforcePayload(openOppsResponse, out var salesforceFailureReason);
         var opportunityCount = TryExtractSalesforceOpportunityCount(openOppsResponse);
 
+        // Flag the Salesforce Account with payment failure info
+        step++;
+        var flagAccountFieldsJson = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["Description"] =
+                $"[Azentix] Stripe payment failure detected on {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC. " +
+                $"Event={stripeEventId}; ServiceNow={incidentNumber ?? "pending"}; Customer={stripeCustomerId}."
+        });
+        var salesforceFlagResponse = await InvokeKernelToolAsync(
+            "salesforce_update_account",
+            new Dictionary<string, object>
+            {
+                ["accountId"] = salesforceAccountId,
+                ["fieldsJson"] = flagAccountFieldsJson
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Flag Salesforce account with payment failure details.",
+            AgentAction = $"salesforce_update_account(accountId={salesforceAccountId})",
+            ActionResult = salesforceFlagResponse,
+            TokensUsed = "0"
+        });
+
+        var salesforceFlagObj = TryParseJsonElement(salesforceFlagResponse);
+        var salesforceFlagSuccess = salesforceFlagObj is JsonElement sfFlagElement
+            && sfFlagElement.TryGetProperty("success", out var sfFlagProp)
+            && sfFlagProp.GetBoolean();
+
         step++;
         var hubspotUpdateResponse = await InvokeKernelToolAsync(
             "hubspot_update_contact",
@@ -609,6 +640,10 @@ Rules:
             ? $"open opportunities found: {opportunityCount}"
             : $"lookup failed ({salesforceFailureReason})";
 
+        var salesforceFlagOutcome = salesforceFlagSuccess
+            ? "account flagged successfully"
+            : "account flag failed";
+
         var hubspotOutcome = hubspotSuccess
             ? "contact update succeeded"
             : $"contact update failed ({hubspotFailureReason})";
@@ -619,13 +654,15 @@ Rules:
         result.OutputData["salesforceOpportunityCount"] = opportunityCount;
         result.OutputData["salesforceLookupSuccess"] = salesforceSuccess;
         result.OutputData["salesforceDetails"] = TryParseJsonElement(openOppsResponse);
+        result.OutputData["salesforceAccountFlagSuccess"] = salesforceFlagSuccess;
+        result.OutputData["salesforceAccountFlagDetails"] = TryParseJsonElement(salesforceFlagResponse);
         result.OutputData["hubspotUpdateSuccess"] = hubspotSuccess;
         result.OutputData["hubspotDetails"] = TryParseJsonElement(hubspotUpdateResponse);
 
         result.Status = AgentStatus.Completed;
         result.FinalAnswer =
             $"Stripe billing alert handling finished. ServiceNow incident created: {createdIncidentDisplay}. " +
-            $"Salesforce outcome: {salesforceOutcome}. HubSpot outcome: {hubspotOutcome}.";
+            $"Salesforce outcome: {salesforceOutcome}; {salesforceFlagOutcome}. HubSpot outcome: {hubspotOutcome}.";
 
         return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
     }
