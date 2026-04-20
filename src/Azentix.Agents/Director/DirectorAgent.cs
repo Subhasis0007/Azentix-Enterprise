@@ -585,8 +585,8 @@ Rules:
                 ["contactId"] = hubspotContactId,
                 ["propertiesJson"] = JsonSerializer.Serialize(new Dictionary<string, string>
                 {
-                    ["payment_failed"] = "true",
-                    ["azentix_last_stripe_event_id"] = stripeEventId
+                    ["hs_lead_status"] = "UNQUALIFIED",
+                    ["description"] = $"Stripe payment failure detected. EventId={stripeEventId}; ServiceNow incident created."
                 })
             },
             ct);
