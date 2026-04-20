@@ -89,6 +89,7 @@ Rules:
 
         int iter = 0;
         var noToolFinalAnswerCount = 0;
+        var contentFilterRetryCount = 0;
 
         while (iter < _cfg.MaxIterations)
         {
@@ -184,6 +185,41 @@ Rules:
             }
             catch (Exception ex)
             {
+                if (IsContentFilterException(ex) && contentFilterRetryCount < 1)
+                {
+                    contentFilterRetryCount++;
+                    _logger.LogWarning(ex,
+                        "Content filter triggered at iteration {Iter}. Retrying once with sanitized prompt.",
+                        iter);
+
+                    result.AuditTrail.Add(new AuditEntry
+                    {
+                        Iteration = iter,
+                        Timestamp = DateTime.UtcNow,
+                        AgentThought = "Azure content filter blocked the prompt. Retrying with sanitized task context.",
+                        AgentAction = "sanitize_prompt_and_retry(task)",
+                        ActionResult = "content_filter",
+                        TokensUsed = "0"
+                    });
+
+                    history = new ChatHistory();
+                    history.AddSystemMessage(SystemPrompt);
+                    history.AddUserMessage(BuildSanitizedUserMessage(task));
+                    continue;
+                }
+
+                if (IsContentFilterException(ex))
+                {
+                    _logger.LogError(ex,
+                        "Content filter persisted after sanitized retry at iteration {Iter}",
+                        iter);
+                    result.Status = AgentStatus.HumanReviewRequired;
+                    result.FinalAnswer =
+                        "Execution was blocked by Azure OpenAI content filtering after a sanitized retry. Review task text/context and retry.";
+                    result.ErrorMessage = "Azure OpenAI content filter blocked the request after retry.";
+                    break;
+                }
+
                 _logger.LogError(ex, "Error at iteration {Iter}", iter);
                 result.Status       = AgentStatus.Failed;
                 result.ErrorMessage = ex.ToString();
@@ -210,6 +246,12 @@ Rules:
         $"INPUT: {System.Text.Json.JsonSerializer.Serialize(t.InputData)}\n\n" +
         BuildTaskSpecificGuidance(t.TaskType) + "\n\n" +
         "Begin. Write your first Thought:";
+
+    private static string BuildSanitizedUserMessage(AgentTask t) =>
+        $"TASK_ID: {t.TaskId}\nTYPE: {t.TaskType}\nPRIORITY: {t.Priority}\n" +
+        $"INPUT: {System.Text.Json.JsonSerializer.Serialize(t.InputData)}\n\n" +
+        BuildTaskSpecificGuidance(t.TaskType) + "\n\n" +
+        "The prior request was blocked by policy filter. Continue with neutral, concise Thought/Action/Observation and factual tool output only.";
 
     private static bool RequiresToolExecution(string taskType) =>
         taskType.Equals("sap-salesforce-price-sync", StringComparison.OrdinalIgnoreCase);
@@ -261,6 +303,9 @@ Rules:
                action.Contains("salesforce_get_pricebook", StringComparison.OrdinalIgnoreCase) ||
                action.Contains("salesforce_update_price", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsContentFilterException(Exception ex) =>
+        ex.ToString().Contains("content_filter", StringComparison.OrdinalIgnoreCase);
 
     private static string Extract(string? text, string start, string? end)
     {
