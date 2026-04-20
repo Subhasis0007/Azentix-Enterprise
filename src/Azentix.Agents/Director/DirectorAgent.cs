@@ -82,6 +82,12 @@ Rules:
             return await ExecuteSapSalesforcePriceSyncDeterministicallyAsync(task, ct);
         }
 
+        if (task.TaskType.Equals("servicenow-incident-triage", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Routing task {Id} to deterministic servicenow-incident-triage executor", task.TaskId);
+            return await ExecuteServiceNowIncidentTriageDeterministicallyAsync(task, ct);
+        }
+
         var history = new ChatHistory();
         history.AddSystemMessage(SystemPrompt);
         history.AddUserMessage(BuildUserMessage(task));
@@ -365,6 +371,139 @@ Rules:
         return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
     }
 
+    private async Task<AgentResult> ExecuteServiceNowIncidentTriageDeterministicallyAsync(AgentTask task, CancellationToken ct)
+    {
+        var result = new AgentResult
+        {
+            TaskId = task.TaskId,
+            StartedAt = DateTime.UtcNow,
+            Status = AgentStatus.Running,
+            AuditTrail = new List<AuditEntry>()
+        };
+
+        var incidentNumber = GetInputString(task.InputData, "incidentNumber");
+        if (string.IsNullOrWhiteSpace(incidentNumber))
+        {
+            result.Status = AgentStatus.HumanReviewRequired;
+            result.FinalAnswer = "Missing required input: incidentNumber.";
+            result.ErrorMessage = "incidentNumber is required.";
+            result.AuditTrail.Add(new AuditEntry
+            {
+                Iteration = 1,
+                Timestamp = DateTime.UtcNow,
+                AgentThought = "Cannot triage incident because incidentNumber was not provided.",
+                AgentAction = "validate_input(incidentNumber)",
+                ActionResult = result.ErrorMessage,
+                TokensUsed = "0"
+            });
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, 1, ct);
+        }
+
+        var step = 0;
+
+        step++;
+        var getIncidentResponse = await InvokeKernelToolAsync(
+            "servicenow_get_incident",
+            new Dictionary<string, object>
+            {
+                ["id"] = incidentNumber,
+                ["isNumber"] = true
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Retrieve incident details from ServiceNow.",
+            AgentAction = $"servicenow_get_incident(id={incidentNumber}, isNumber=true)",
+            ActionResult = getIncidentResponse,
+            TokensUsed = "0"
+        });
+
+        if (!IsSuccessfulServiceNowPayload(getIncidentResponse, out var incidentFailureReason))
+        {
+            result.Status = AgentStatus.HumanReviewRequired;
+            result.FinalAnswer = "ServiceNow incident retrieval failed. Verify instance URL, username, and password.";
+            result.ErrorMessage = incidentFailureReason;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+        }
+
+        if (!TryExtractServiceNowIncident(getIncidentResponse, out var incidentSysId, out var shortDescription))
+        {
+            result.Status = AgentStatus.HumanReviewRequired;
+            result.FinalAnswer = "ServiceNow incident was not found or did not return a valid result record.";
+            result.ErrorMessage = getIncidentResponse;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+        }
+
+        var knowledgeQuery = string.IsNullOrWhiteSpace(shortDescription)
+            ? incidentNumber
+            : shortDescription!;
+
+        step++;
+        var kbResponse = await InvokeKernelToolAsync(
+            "servicenow_search_knowledge",
+            new Dictionary<string, object>
+            {
+                ["query"] = knowledgeQuery,
+                ["limit"] = 3
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Search ServiceNow KB for related guidance.",
+            AgentAction = "servicenow_search_knowledge(query=<incident summary>, limit=3)",
+            ActionResult = kbResponse,
+            TokensUsed = "0"
+        });
+
+        var assignmentGroup = DetermineAssignmentGroup(shortDescription);
+        var triageNote = $"Incident {incidentNumber} triaged by Azentix. Routed to {assignmentGroup} after KB similarity review.";
+
+        step++;
+        var updateResponse = await InvokeKernelToolAsync(
+            "servicenow_update_incident",
+            new Dictionary<string, object>
+            {
+                ["sysId"] = incidentSysId!,
+                ["state"] = "2",
+                ["priority"] = "2",
+                ["assignmentGroup"] = assignmentGroup,
+                ["workNote"] = triageNote
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Apply assignment update and append triage work note.",
+            AgentAction = $"servicenow_update_incident(sysId={incidentSysId}, state=2, priority=2, assignmentGroup={assignmentGroup})",
+            ActionResult = updateResponse,
+            TokensUsed = "0"
+        });
+
+        if (!IsSuccessfulServiceNowPayload(updateResponse, out var updateFailureReason))
+        {
+            result.Status = AgentStatus.HumanReviewRequired;
+            result.FinalAnswer = "ServiceNow incident update failed during triage. Review API response details for credentials/ACL issues.";
+            result.ErrorMessage = updateFailureReason;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+        }
+
+        result.OutputData["incidentNumber"] = incidentNumber;
+        result.OutputData["incidentSysId"] = incidentSysId!;
+        result.OutputData["assignmentGroup"] = assignmentGroup;
+        result.OutputData["updateDetails"] = TryParseJsonElement(updateResponse);
+
+        result.Status = AgentStatus.Completed;
+        result.FinalAnswer =
+            $"The ServiceNow incident '{incidentNumber}' was triaged and updated successfully. Assignment group was set to '{assignmentGroup}' and a work note was appended.";
+
+        return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+    }
+
     private async Task<AgentResult> FinalizeDeterministicResultWithLlmAsync(
         AgentTask task,
         AgentResult result,
@@ -554,6 +693,82 @@ Rules:
         return false;
     }
 
+    private static bool IsSuccessfulServiceNowPayload(string payload, out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (!TryParseJson(payload, out var root))
+        {
+            failureReason = "Tool output was not valid JSON.";
+            return false;
+        }
+
+        if (!root.TryGetProperty("success", out var successElement))
+            return true;
+
+        if (successElement.ValueKind == JsonValueKind.True)
+            return true;
+
+        failureReason = payload;
+        return false;
+    }
+
+    private static bool TryExtractServiceNowIncident(
+        string getIncidentPayload,
+        out string? sysId,
+        out string? shortDescription)
+    {
+        sysId = null;
+        shortDescription = null;
+
+        if (!TryParseJson(getIncidentPayload, out var root))
+            return false;
+
+        if (!root.TryGetProperty("data", out var dataElement))
+            return false;
+
+        if (!dataElement.TryGetProperty("result", out var resultElement))
+            return false;
+
+        JsonElement incidentRecord;
+        if (resultElement.ValueKind == JsonValueKind.Array)
+        {
+            if (resultElement.GetArrayLength() == 0)
+                return false;
+
+            incidentRecord = resultElement[0];
+        }
+        else if (resultElement.ValueKind == JsonValueKind.Object)
+        {
+            incidentRecord = resultElement;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (incidentRecord.TryGetProperty("sys_id", out var sysIdElement))
+            sysId = sysIdElement.GetString();
+
+        if (incidentRecord.TryGetProperty("short_description", out var shortDescriptionElement))
+            shortDescription = shortDescriptionElement.GetString();
+
+        return !string.IsNullOrWhiteSpace(sysId);
+    }
+
+    private static string DetermineAssignmentGroup(string? shortDescription)
+    {
+        if (string.IsNullOrWhiteSpace(shortDescription))
+            return "IT Support";
+
+        var text = shortDescription.ToLowerInvariant();
+        if (text.Contains("sap")) return "SAP-Basis";
+        if (text.Contains("salesforce") || text.Contains("crm")) return "CRM-Integration";
+        if (text.Contains("network") || text.Contains("dns") || text.Contains("latency")) return "Network-Ops";
+        if (text.Contains("payment") || text.Contains("stripe")) return "Finance-Operations";
+
+        return "IT Support";
+    }
+
     private static decimal? TryExtractUnitPrice(string pricebookPayload)
     {
         if (!TryParseJson(pricebookPayload, out var root))
@@ -591,6 +806,18 @@ Rules:
         {
             root = default;
             return false;
+        }
+    }
+
+    private static object TryParseJsonElement(string value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(value);
+        }
+        catch
+        {
+            return value;
         }
     }
 

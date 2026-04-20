@@ -90,7 +90,7 @@ var salesforceConfiguration = new SalesforceConfiguration
 
 var serviceNowConfiguration = new ServiceNowConfiguration
 {
-    InstanceUrl = cfg["SERVICENOW_INSTANCE_URL"] ?? "",
+    InstanceUrl = NormalizeServiceNowInstanceUrl(cfg["SERVICENOW_INSTANCE_URL"] ?? ""),
     Username    = cfg["SERVICENOW_USERNAME"] ?? "",
     Password    = cfg["SERVICENOW_PASSWORD"] ?? ""
 };
@@ -287,6 +287,18 @@ app.MapGet("/", () => new
     model = useAzure ? chatDeploy : ollamaChatModel,
     docs = "/swagger"
 });
+
+static string NormalizeServiceNowInstanceUrl(string rawValue)
+{
+    if (string.IsNullOrWhiteSpace(rawValue))
+        return string.Empty;
+
+    var candidate = rawValue.Trim();
+    if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri))
+        return candidate.TrimEnd('/');
+
+    return $"{uri.Scheme}://{uri.Host}";
+}
 
 app.Run();
 

@@ -35,7 +35,15 @@ public class ServiceNowPlugin
             ? $"{_cfg.InstanceUrl}/api/now/table/incident?sysparm_query=number={id}&sysparm_fields={fields}&sysparm_limit=1"
             : $"{_cfg.InstanceUrl}/api/now/table/incident/{id}?sysparm_fields={fields}";
         var resp = await _http.GetAsync(url);
-        return await resp.Content.ReadAsStringAsync();
+        var body = await resp.Content.ReadAsStringAsync();
+        return JsonSerializer.Serialize(new
+        {
+            success = resp.IsSuccessStatusCode,
+            statusCode = (int)resp.StatusCode,
+            id,
+            queryType = isNumber ? "number" : "sys_id",
+            data = ParseJsonOrRaw(body)
+        });
     }
 
     [KernelFunction("servicenow_update_incident")]
