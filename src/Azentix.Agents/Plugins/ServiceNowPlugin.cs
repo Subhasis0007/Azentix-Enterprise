@@ -48,19 +48,46 @@ public class ServiceNowPlugin
         [Description("Work note text to append")] string? workNote = null,
         [Description("Category value")] string? category = null)
     {
-        var body = new Dictionary<string, string>();
-        if (state           != null) body["state"]            = state;
-        if (assignmentGroup != null) body["assignment_group"] = assignmentGroup;
-        if (priority        != null) body["priority"]         = priority;
-        if (category        != null) body["category"]         = category;
-        if (workNote        != null) body["work_notes"]       = $"[Azentix Agent] {workNote}";
+        var body = new Dictionary<string, object>();
+        if (state != null) body["state"] = state;
+        if (priority != null) body["priority"] = priority;
+        if (category != null) body["category"] = category;
+        if (workNote != null) body["work_notes"] = $"[Azentix Agent] {workNote}";
+
+        string? assignmentGroupSysId = null;
+        if (!string.IsNullOrWhiteSpace(assignmentGroup))
+        {
+            assignmentGroupSysId = await ResolveAssignmentGroupSysIdAsync(assignmentGroup);
+            if (!string.IsNullOrWhiteSpace(assignmentGroupSysId))
+            {
+                body["assignment_group"] = assignmentGroupSysId;
+            }
+            else
+            {
+                _log.LogWarning(
+                    "ServiceNow assignment group not found by name. Sending original value as fallback. Group={Group}",
+                    assignmentGroup);
+                body["assignment_group"] = assignmentGroup;
+            }
+        }
+
         var content = new StringContent(JsonSerializer.Serialize(body),
             Encoding.UTF8, "application/json");
         var resp = await _http.PatchAsync(
             $"{_cfg.InstanceUrl}/api/now/table/incident/{sysId}", content);
+        var responseBody = await resp.Content.ReadAsStringAsync();
+
+        var verification = await VerifyIncidentAsync(sysId);
+
         return JsonSerializer.Serialize(new {
             success = resp.IsSuccessStatusCode, sysId,
-            updatedFields = body.Keys.ToArray() });
+            statusCode = (int)resp.StatusCode,
+            assignmentGroupRequested = assignmentGroup,
+            assignmentGroupResolvedSysId = assignmentGroupSysId,
+            updatedFields = body.Keys.ToArray(),
+            details = ParseJsonOrRaw(responseBody),
+            verification
+        });
     }
 
     [KernelFunction("servicenow_create_incident")]
@@ -101,5 +128,64 @@ public class ServiceNowPlugin
                   $"&sysparm_fields=short_description,text,kb_category&sysparm_limit={limit}";
         var resp = await _http.GetAsync(url);
         return await resp.Content.ReadAsStringAsync();
+    }
+
+    private async Task<string?> ResolveAssignmentGroupSysIdAsync(string assignmentGroup)
+    {
+        var escaped = Uri.EscapeDataString(assignmentGroup.Trim());
+        var url = $"{_cfg.InstanceUrl}/api/now/table/sys_user_group" +
+                  $"?sysparm_query=name={escaped}" +
+                  "&sysparm_fields=sys_id,name" +
+                  "&sysparm_limit=1";
+
+        var resp = await _http.GetAsync(url);
+        var body = await resp.Content.ReadAsStringAsync();
+        if (!resp.IsSuccessStatusCode)
+            return null;
+
+        try
+        {
+            var json = JsonSerializer.Deserialize<JsonElement>(body);
+            if (!json.TryGetProperty("result", out var result) ||
+                result.ValueKind != JsonValueKind.Array ||
+                result.GetArrayLength() == 0)
+                return null;
+
+            var first = result[0];
+            return first.TryGetProperty("sys_id", out var sysId)
+                ? sysId.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<object> VerifyIncidentAsync(string sysId)
+    {
+        var fields = "sys_id,number,state,priority,category,assignment_group,sys_updated_on";
+        var url = $"{_cfg.InstanceUrl}/api/now/table/incident/{sysId}?sysparm_fields={fields}&sysparm_display_value=all";
+        var resp = await _http.GetAsync(url);
+        var body = await resp.Content.ReadAsStringAsync();
+
+        return new
+        {
+            success = resp.IsSuccessStatusCode,
+            statusCode = (int)resp.StatusCode,
+            incident = ParseJsonOrRaw(body)
+        };
+    }
+
+    private static object ParseJsonOrRaw(string value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(value);
+        }
+        catch
+        {
+            return value;
+        }
     }
 }
