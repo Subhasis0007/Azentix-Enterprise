@@ -8,4 +8,6 @@ public record SalesforceConfiguration
     public required string Username { get; init; }
     public required string Password { get; init; }
     public string ApiVersion { get; init; } = "v59.0";
+    public string AuthMode { get; init; } = "auto";
+    public string AuthBaseUrl { get; init; } = "";
 }

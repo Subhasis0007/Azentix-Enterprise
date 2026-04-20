@@ -83,7 +83,9 @@ var salesforceConfiguration = new SalesforceConfiguration
     ClientId     = cfg["SALESFORCE_CLIENT_ID"] ?? "",
     ClientSecret = cfg["SALESFORCE_CLIENT_SECRET"] ?? "",
     Username     = cfg["SALESFORCE_USERNAME"] ?? "",
-    Password     = cfg["SALESFORCE_PASSWORD"] ?? ""
+    Password     = cfg["SALESFORCE_PASSWORD"] ?? "",
+    AuthMode     = cfg["SALESFORCE_AUTH_MODE"] ?? "auto",
+    AuthBaseUrl  = cfg["SALESFORCE_AUTH_BASE_URL"] ?? ""
 };
 
 var serviceNowConfiguration = new ServiceNowConfiguration

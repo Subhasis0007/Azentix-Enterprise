@@ -149,16 +149,11 @@ public static partial class DirectorTaskRules
 
         if (salesforceConfiguration is not null)
         {
-            if (LooksLikePlaceholderUrl(salesforceConfiguration.InstanceUrl) ||
-                HasPlaceholderValue(
-                    salesforceConfiguration.ClientId,
-                    salesforceConfiguration.ClientSecret,
-                    salesforceConfiguration.Username,
-                    salesforceConfiguration.Password))
+            if (IsSalesforceConfigInvalid(salesforceConfiguration, out var salesforceConfigError))
             {
                 result = CreateHumanReviewResult(
                     task,
-                    "The task cannot proceed because Salesforce integration settings are missing or placeholders.");
+                    salesforceConfigError);
                 return true;
             }
         }
@@ -193,23 +188,12 @@ public static partial class DirectorTaskRules
     {
         result = null;
 
-        if (salesforceConfiguration is not null && LooksLikePlaceholderUrl(salesforceConfiguration.InstanceUrl))
+        if (salesforceConfiguration is not null &&
+            IsSalesforceConfigInvalid(salesforceConfiguration, out var salesforceConfigError))
         {
             result = CreateHumanReviewResult(
                 task,
-                "The task cannot proceed because the Salesforce integration is not configured with a real instance URL. This task is marked for human review.");
-            return true;
-        }
-
-        if (salesforceConfiguration is not null && HasPlaceholderValue(
-                salesforceConfiguration.ClientId,
-                salesforceConfiguration.ClientSecret,
-                salesforceConfiguration.Username,
-                salesforceConfiguration.Password))
-        {
-            result = CreateHumanReviewResult(
-                task,
-                "The task cannot proceed because the Salesforce integration credentials are missing or still using placeholder values. This task is marked for human review.");
+                salesforceConfigError);
             return true;
         }
 
@@ -333,6 +317,55 @@ public static partial class DirectorTaskRules
     private static bool ContainsHumanReviewSignal(string text) =>
         HumanReviewSignals.Any(signal =>
             text.Contains(signal, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsSalesforceConfigInvalid(
+        SalesforceConfiguration configuration,
+        out string message)
+    {
+        message = string.Empty;
+
+        if (LooksLikePlaceholderUrl(configuration.InstanceUrl))
+        {
+            message = "The task cannot proceed because the Salesforce integration is not configured with a real instance URL. This task is marked for human review.";
+            return true;
+        }
+
+        if (HasPlaceholderValue(configuration.ClientId, configuration.ClientSecret))
+        {
+            message = "The task cannot proceed because the Salesforce client credentials are missing or still using placeholder values. This task is marked for human review.";
+            return true;
+        }
+
+        var authMode = NormalizeSalesforceAuthMode(configuration.AuthMode);
+        if (authMode is "password")
+        {
+            if (HasPlaceholderValue(configuration.Username, configuration.Password))
+            {
+                message = "The task cannot proceed because the Salesforce username/password credentials are missing or still using placeholder values. This task is marked for human review.";
+                return true;
+            }
+
+            return false;
+        }
+
+        if (authMode is "client_credentials")
+            return false;
+
+        if (authMode is "auto")
+            return false;
+
+        message =
+            $"The task cannot proceed because SALESFORCE_AUTH_MODE value '{configuration.AuthMode}' is invalid. Use 'auto', 'password', or 'client_credentials'.";
+        return true;
+    }
+
+    private static string NormalizeSalesforceAuthMode(string? authMode)
+    {
+        if (string.IsNullOrWhiteSpace(authMode))
+            return "auto";
+
+        return authMode.Trim().ToLowerInvariant();
+    }
 
     private static bool LooksLikePlaceholderUrl(string? url)
     {

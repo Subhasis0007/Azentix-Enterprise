@@ -239,27 +239,159 @@ public class SalesforcePlugin
         if (_token is not null) return;
 
         var authBaseUrl = ResolveAuthBaseUrl();
-        _log.LogInformation("Salesforce auth start | AuthBaseUrl={AuthBaseUrl} | InstanceUrl={InstanceUrl} | Username={Username}",
+        var authMode = NormalizeAuthMode(_cfg.AuthMode);
+        _log.LogInformation("Salesforce auth start | AuthMode={AuthMode} | AuthBaseUrl={AuthBaseUrl} | InstanceUrl={InstanceUrl} | Username={Username}",
+            authMode,
             authBaseUrl,
             _cfg.InstanceUrl,
             _cfg.Username);
-        var resp = await _http.PostAsync($"{authBaseUrl}/services/oauth2/token",
-            new FormUrlEncodedContent(new Dictionary<string, string> {
-                ["grant_type"]    = "password",
-                ["client_id"]     = _cfg.ClientId,
+
+        AuthResponse? authResponse = authMode switch
+        {
+            "password" => await AuthenticateWithPasswordGrantAsync(authBaseUrl),
+            "client_credentials" => await AuthenticateWithClientCredentialsAsync(authBaseUrl),
+            _ => await AuthenticateWithAutoFallbackAsync(authBaseUrl)
+        };
+
+        _token = authResponse.AccessToken;
+        _instanceUrl = string.IsNullOrWhiteSpace(authResponse.InstanceUrl)
+            ? _cfg.InstanceUrl
+            : authResponse.InstanceUrl;
+
+        if (string.IsNullOrWhiteSpace(_token) || string.IsNullOrWhiteSpace(_instanceUrl))
+        {
+            throw new InvalidOperationException(
+                "Salesforce authentication returned an empty token or instance URL.");
+        }
+
+        _http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
+        _log.LogInformation("Salesforce auth complete | Mode={AuthMode} | InstanceUrl={InstanceUrl}",
+            authResponse.AuthMode,
+            _instanceUrl);
+    }
+
+    private string ResolveAuthBaseUrl()
+    {
+        if (!string.IsNullOrWhiteSpace(_cfg.AuthBaseUrl))
+            return _cfg.AuthBaseUrl.TrimEnd('/');
+
+        if (!Uri.TryCreate(_cfg.InstanceUrl, UriKind.Absolute, out var uri))
+            return "https://login.salesforce.com";
+
+        var host = uri.Host;
+        if (host.Contains("sandbox", StringComparison.OrdinalIgnoreCase) ||
+            host.Contains("cs", StringComparison.OrdinalIgnoreCase))
+            return "https://test.salesforce.com";
+
+        return "https://login.salesforce.com";
+    }
+
+    private async Task<AuthResponse> AuthenticateWithAutoFallbackAsync(string authBaseUrl)
+    {
+        var canUsePassword =
+            !string.IsNullOrWhiteSpace(_cfg.Username) &&
+            !string.IsNullOrWhiteSpace(_cfg.Password);
+
+        if (!canUsePassword)
+        {
+            _log.LogInformation("Salesforce auth auto | Password grant skipped because username/password are not configured.");
+            return await AuthenticateWithClientCredentialsAsync(authBaseUrl);
+        }
+
+        var passwordAttempt = await SendTokenRequestAsync(
+            authBaseUrl,
+            "password",
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "password",
+                ["client_id"] = _cfg.ClientId,
                 ["client_secret"] = _cfg.ClientSecret,
-                ["username"]      = _cfg.Username,
-                ["password"]      = _cfg.Password
-            }));
+                ["username"] = _cfg.Username,
+                ["password"] = _cfg.Password
+            });
+
+        if (passwordAttempt.IsSuccess)
+            return passwordAttempt.RequireAuthResponse("password");
+
+        if (passwordAttempt.ErrorBody.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase))
+        {
+            _log.LogWarning("Salesforce auth auto | Password grant failed with invalid_grant. Falling back to client_credentials.");
+            return await AuthenticateWithClientCredentialsAsync(authBaseUrl);
+        }
+
+        throw new InvalidOperationException(
+            $"Salesforce authentication failed using password grant with status {passwordAttempt.StatusCode}. Response: {passwordAttempt.ErrorBody}");
+    }
+
+    private async Task<AuthResponse> AuthenticateWithPasswordGrantAsync(string authBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(_cfg.Username) || string.IsNullOrWhiteSpace(_cfg.Password))
+        {
+            throw new InvalidOperationException(
+                "Salesforce password authentication requires SALESFORCE_USERNAME and SALESFORCE_PASSWORD.");
+        }
+
+        var attempt = await SendTokenRequestAsync(
+            authBaseUrl,
+            "password",
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "password",
+                ["client_id"] = _cfg.ClientId,
+                ["client_secret"] = _cfg.ClientSecret,
+                ["username"] = _cfg.Username,
+                ["password"] = _cfg.Password
+            });
+
+        if (attempt.IsSuccess)
+            return attempt.RequireAuthResponse("password");
+
+        throw new InvalidOperationException(
+            $"Salesforce authentication failed using password grant with status {attempt.StatusCode}. Response: {attempt.ErrorBody}");
+    }
+
+    private async Task<AuthResponse> AuthenticateWithClientCredentialsAsync(string authBaseUrl)
+    {
+        var attempt = await SendTokenRequestAsync(
+            authBaseUrl,
+            "client_credentials",
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = _cfg.ClientId,
+                ["client_secret"] = _cfg.ClientSecret
+            });
+
+        if (attempt.IsSuccess)
+            return attempt.RequireAuthResponse("client_credentials");
+
+        throw new InvalidOperationException(
+            $"Salesforce authentication failed using client_credentials grant with status {attempt.StatusCode}. Response: {attempt.ErrorBody}");
+    }
+
+    private async Task<AuthAttemptResult> SendTokenRequestAsync(
+        string authBaseUrl,
+        string grantType,
+        Dictionary<string, string> formData)
+    {
+        var resp = await _http.PostAsync(
+            $"{authBaseUrl}/services/oauth2/token",
+            new FormUrlEncodedContent(formData));
         var body = await resp.Content.ReadAsStringAsync();
-        _log.LogInformation("Salesforce auth response | Status={Status} | BodySnippet={BodySnippet}",
+        _log.LogInformation("Salesforce auth response | GrantType={GrantType} | Status={Status} | BodySnippet={BodySnippet}",
+            grantType,
             (int)resp.StatusCode,
             TruncateForLog(body));
 
         if (!resp.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"Salesforce authentication failed with status {(int)resp.StatusCode}. Response: {body}");
+            return new AuthAttemptResult
+            {
+                IsSuccess = false,
+                StatusCode = (int)resp.StatusCode,
+                ErrorBody = body
+            };
         }
 
         JsonElement json;
@@ -279,32 +411,34 @@ public class SalesforcePlugin
                 $"Salesforce authentication response does not contain access_token. Response: {body}");
         }
 
-        _token = tokenElement.GetString();
-        _instanceUrl = json.TryGetProperty("instance_url", out var iu)
-            ? iu.GetString() : _cfg.InstanceUrl;
+        var instanceUrl = json.TryGetProperty("instance_url", out var iu)
+            ? iu.GetString()
+            : _cfg.InstanceUrl;
 
-        if (string.IsNullOrWhiteSpace(_token) || string.IsNullOrWhiteSpace(_instanceUrl))
+        return new AuthAttemptResult
         {
-            throw new InvalidOperationException(
-                "Salesforce authentication returned an empty token or instance URL.");
-        }
-
-        _http.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);
-        _log.LogInformation("Salesforce auth complete | InstanceUrl={InstanceUrl}", _instanceUrl);
+            IsSuccess = true,
+            StatusCode = (int)resp.StatusCode,
+            AuthResponse = new AuthResponse(
+                tokenElement.GetString() ?? string.Empty,
+                instanceUrl ?? string.Empty,
+                grantType)
+        };
     }
 
-    private string ResolveAuthBaseUrl()
+    private static string NormalizeAuthMode(string? authMode)
     {
-        if (!Uri.TryCreate(_cfg.InstanceUrl, UriKind.Absolute, out var uri))
-            return "https://login.salesforce.com";
+        if (string.IsNullOrWhiteSpace(authMode))
+            return "auto";
 
-        var host = uri.Host;
-        if (host.Contains("sandbox", StringComparison.OrdinalIgnoreCase) ||
-            host.Contains("cs", StringComparison.OrdinalIgnoreCase))
-            return "https://test.salesforce.com";
-
-        return "https://login.salesforce.com";
+        var normalized = authMode.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "password" => "password",
+            "client_credentials" => "client_credentials",
+            "auto" => "auto",
+            _ => "auto"
+        };
     }
 
     private static object ParseJsonOrRaw(string value)
@@ -329,4 +463,25 @@ public class SalesforcePlugin
             ? normalized
             : normalized[..max] + "...";
     }
+
+    private sealed class AuthAttemptResult
+    {
+        public bool IsSuccess { get; init; }
+        public int StatusCode { get; init; }
+        public string ErrorBody { get; init; } = string.Empty;
+        public AuthResponse? AuthResponse { get; init; }
+
+        public AuthResponse RequireAuthResponse(string grantType)
+        {
+            if (AuthResponse is null)
+            {
+                throw new InvalidOperationException(
+                    $"Salesforce {grantType} authentication did not return token data.");
+            }
+
+            return AuthResponse;
+        }
+    }
+
+    private sealed record AuthResponse(string AccessToken, string InstanceUrl, string AuthMode);
 }
