@@ -88,6 +88,12 @@ Rules:
             return await ExecuteServiceNowIncidentTriageDeterministicallyAsync(task, ct);
         }
 
+        if (task.TaskType.Equals("stripe-billing-alert", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Routing task {Id} to deterministic stripe-billing-alert executor", task.TaskId);
+            return await ExecuteStripeBillingAlertDeterministicallyAsync(task, ct);
+        }
+
         var history = new ChatHistory();
         history.AddSystemMessage(SystemPrompt);
         history.AddUserMessage(BuildUserMessage(task));
@@ -504,6 +510,127 @@ Rules:
         return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
     }
 
+    private async Task<AgentResult> ExecuteStripeBillingAlertDeterministicallyAsync(AgentTask task, CancellationToken ct)
+    {
+        var result = new AgentResult
+        {
+            TaskId = task.TaskId,
+            StartedAt = DateTime.UtcNow,
+            Status = AgentStatus.Running,
+            AuditTrail = new List<AuditEntry>()
+        };
+
+        var stripeEventType = GetInputString(task.InputData, "stripeEventType") ?? "unknown";
+        var stripeEventId = GetInputString(task.InputData, "stripeEventId") ?? "unknown";
+        var stripeCustomerId = GetInputString(task.InputData, "stripeCustomerId") ?? "unknown";
+        var salesforceAccountId = GetInputString(task.InputData, "salesforceAccountId") ?? "unknown";
+        var hubspotContactId = GetInputString(task.InputData, "hubspotContactId") ?? "unknown";
+
+        var step = 0;
+
+        step++;
+        var createIncidentResponse = await InvokeKernelToolAsync(
+            "servicenow_create_incident",
+            new Dictionary<string, object>
+            {
+                ["shortDescription"] = $"Stripe payment failure: {stripeEventId}",
+                ["description"] =
+                    $"Stripe payment failure detected. Event={stripeEventId}; Type={stripeEventType}; Customer={stripeCustomerId}; SalesforceAccount={salesforceAccountId}; HubSpotContact={hubspotContactId}.",
+                ["category"] = "stripe",
+                ["urgency"] = "2",
+                ["impact"] = "2",
+                ["assignmentGroup"] = "Finance-Operations"
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Create ServiceNow incident for Stripe payment failure.",
+            AgentAction = "servicenow_create_incident(...)",
+            ActionResult = createIncidentResponse,
+            TokensUsed = "0"
+        });
+
+        var incidentNumber = TryExtractServiceNowCreatedIncidentNumber(createIncidentResponse);
+        var incidentSysId = TryExtractServiceNowCreatedIncidentSysId(createIncidentResponse);
+
+        step++;
+        var openOppsResponse = await InvokeKernelToolAsync(
+            "salesforce_get_open_opportunities_by_account",
+            new Dictionary<string, object>
+            {
+                ["accountId"] = salesforceAccountId,
+                ["limit"] = 5
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Check open Salesforce opportunities for the provided account.",
+            AgentAction = $"salesforce_get_open_opportunities_by_account(accountId={salesforceAccountId}, limit=5)",
+            ActionResult = openOppsResponse,
+            TokensUsed = "0"
+        });
+
+        var salesforceSuccess = IsSuccessfulSalesforcePayload(openOppsResponse, out var salesforceFailureReason);
+        var opportunityCount = TryExtractSalesforceOpportunityCount(openOppsResponse);
+
+        step++;
+        var hubspotUpdateResponse = await InvokeKernelToolAsync(
+            "hubspot_update_contact",
+            new Dictionary<string, object>
+            {
+                ["contactId"] = hubspotContactId,
+                ["propertiesJson"] = JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    ["payment_failed"] = "true",
+                    ["azentix_last_stripe_event_id"] = stripeEventId
+                })
+            },
+            ct);
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = step,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Update HubSpot contact to reflect payment failure state.",
+            AgentAction = $"hubspot_update_contact(contactId={hubspotContactId}, propertiesJson=...)",
+            ActionResult = hubspotUpdateResponse,
+            TokensUsed = "0"
+        });
+
+        var hubspotSuccess = IsSuccessfulHubSpotPayload(hubspotUpdateResponse, out var hubspotFailureReason);
+
+        var createdIncidentDisplay = string.IsNullOrWhiteSpace(incidentNumber)
+            ? "not returned"
+            : incidentNumber;
+
+        var salesforceOutcome = salesforceSuccess
+            ? $"open opportunities found: {opportunityCount}"
+            : $"lookup failed ({salesforceFailureReason})";
+
+        var hubspotOutcome = hubspotSuccess
+            ? "contact update succeeded"
+            : $"contact update failed ({hubspotFailureReason})";
+
+        result.OutputData["stripeEventId"] = stripeEventId;
+        result.OutputData["createdIncidentNumber"] = createdIncidentDisplay;
+        result.OutputData["createdIncidentSysId"] = incidentSysId ?? string.Empty;
+        result.OutputData["salesforceOpportunityCount"] = opportunityCount;
+        result.OutputData["salesforceLookupSuccess"] = salesforceSuccess;
+        result.OutputData["salesforceDetails"] = TryParseJsonElement(openOppsResponse);
+        result.OutputData["hubspotUpdateSuccess"] = hubspotSuccess;
+        result.OutputData["hubspotDetails"] = TryParseJsonElement(hubspotUpdateResponse);
+
+        result.Status = AgentStatus.Completed;
+        result.FinalAnswer =
+            $"Stripe billing alert handling finished. ServiceNow incident created: {createdIncidentDisplay}. " +
+            $"Salesforce outcome: {salesforceOutcome}. HubSpot outcome: {hubspotOutcome}.";
+
+        return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+    }
+
     private async Task<AgentResult> FinalizeDeterministicResultWithLlmAsync(
         AgentTask task,
         AgentResult result,
@@ -565,7 +692,7 @@ Rules:
                 $"Status: {result.Status}\n" +
                 $"DeterministicAnswer: {deterministicAnswer}\n" +
                 $"ErrorSummary: {errorSummary}\n" +
-                "Return 2-4 short sentences. Include root cause when status is HumanReviewRequired.");
+                BuildLlmFormattingInstruction(task.TaskType));
 
             PromptExecutionSettings settings =
                 _cfg.ModelProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
@@ -710,6 +837,72 @@ Rules:
 
         failureReason = payload;
         return false;
+    }
+
+    private static bool IsSuccessfulHubSpotPayload(string payload, out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (!TryParseJson(payload, out var root))
+        {
+            failureReason = "Tool output was not valid JSON.";
+            return false;
+        }
+
+        if (!root.TryGetProperty("success", out var successElement))
+            return true;
+
+        if (successElement.ValueKind == JsonValueKind.True)
+            return true;
+
+        failureReason = payload;
+        return false;
+    }
+
+    private static string? TryExtractServiceNowCreatedIncidentNumber(string payload)
+    {
+        if (!TryParseJson(payload, out var root) ||
+            !root.TryGetProperty("result", out var result) ||
+            result.ValueKind != JsonValueKind.Object)
+            return null;
+
+        return result.TryGetProperty("number", out var number)
+            ? number.GetString()
+            : null;
+    }
+
+    private static string? TryExtractServiceNowCreatedIncidentSysId(string payload)
+    {
+        if (!TryParseJson(payload, out var root) ||
+            !root.TryGetProperty("result", out var result) ||
+            result.ValueKind != JsonValueKind.Object)
+            return null;
+
+        return result.TryGetProperty("sys_id", out var sysId)
+            ? sysId.GetString()
+            : null;
+    }
+
+    private static int TryExtractSalesforceOpportunityCount(string payload)
+    {
+        if (!TryParseJson(payload, out var root) ||
+            !root.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Object)
+            return 0;
+
+        if (data.TryGetProperty("totalSize", out var totalSize) && totalSize.TryGetInt32(out var count))
+            return count;
+
+        return 0;
+    }
+
+    private static string BuildLlmFormattingInstruction(string taskType)
+    {
+        if (taskType.Equals("stripe-billing-alert", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Return 3-5 short sentences. Include: created ServiceNow incident number, Salesforce opportunity result, HubSpot update result, and a clear next action if any integration step failed.";
+        }
+
+        return "Return 2-4 short sentences. Include root cause when status is HumanReviewRequired.";
     }
 
     private static bool TryExtractServiceNowIncident(

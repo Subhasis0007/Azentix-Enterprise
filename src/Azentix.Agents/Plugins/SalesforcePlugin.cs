@@ -256,6 +256,45 @@ public class SalesforcePlugin
         return await resp.Content.ReadAsStringAsync();
     }
 
+    [KernelFunction("salesforce_get_open_opportunities_by_account")]
+    [Description("Get open Salesforce opportunities for an Account ID.")]
+    public async Task<string> GetOpenOpportunitiesByAccountAsync(
+        [Description("Salesforce Account ID (001...)" )] string accountId,
+        [Description("Maximum records to return")] int limit = 5)
+    {
+        await EnsureAuthAsync();
+        var safeLimit = Math.Clamp(limit, 1, 25);
+        var q =
+            $"SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='{accountId}' AND IsClosed=false LIMIT {safeLimit}";
+        var url = $"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString(q)}";
+        var resp = await _http.GetAsync(url);
+        var body = await resp.Content.ReadAsStringAsync();
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                errorCode = "salesforce_api_error",
+                resource = "Opportunity",
+                queryType = "by_account_id",
+                accountId,
+                statusCode = (int)resp.StatusCode,
+                details = ParseJsonOrRaw(body)
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            resource = "Opportunity",
+            queryType = "by_account_id",
+            accountId,
+            statusCode = (int)resp.StatusCode,
+            data = ParseJsonOrRaw(body)
+        });
+    }
+
     private async Task EnsureAuthAsync()
     {
         if (_token is not null) return;

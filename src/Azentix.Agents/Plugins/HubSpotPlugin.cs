@@ -85,8 +85,13 @@ public class HubSpotPlugin
         var resp = await _http.PatchAsync(
             $"{_cfg.ApiBase}/crm/v3/objects/contacts/{contactId}",
             new StringContent(body, Encoding.UTF8, "application/json"));
+        var responseBody = await resp.Content.ReadAsStringAsync();
         return JsonSerializer.Serialize(new {
-            success = resp.IsSuccessStatusCode, contactId });
+            success = resp.IsSuccessStatusCode,
+            contactId,
+            statusCode = (int)resp.StatusCode,
+            details = ParseJsonOrRaw(responseBody)
+        });
     }
 
     [KernelFunction("hubspot_add_to_list")]
@@ -127,5 +132,17 @@ public class HubSpotPlugin
             $"{_cfg.ApiBase}/crm/v3/objects/deals/{identifier}" +
             "?properties=dealname,amount,dealstage");
         return await r.Content.ReadAsStringAsync();
+    }
+
+    private static object ParseJsonOrRaw(string value)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(value);
+        }
+        catch
+        {
+            return value;
+        }
     }
 }
