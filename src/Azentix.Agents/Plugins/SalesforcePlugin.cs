@@ -455,8 +455,9 @@ public class SalesforcePlugin
         string grantType,
         Dictionary<string, string> formData)
     {
+        var tokenEndpoint = BuildTokenEndpoint(authBaseUrl);
         var resp = await _http.PostAsync(
-            $"{authBaseUrl}/services/oauth2/token",
+            tokenEndpoint,
             new FormUrlEncodedContent(formData));
         var body = await resp.Content.ReadAsStringAsync();
         _log.LogInformation("Salesforce auth response | GrantType={GrantType} | Status={Status} | BodySnippet={BodySnippet}",
@@ -504,6 +505,15 @@ public class SalesforcePlugin
                 instanceUrl ?? string.Empty,
                 grantType)
         };
+    }
+
+    private static string BuildTokenEndpoint(string authBaseUrl)
+    {
+        var normalized = (authBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (normalized.EndsWith("/services/oauth2/token", StringComparison.OrdinalIgnoreCase))
+            return normalized;
+
+        return $"{normalized}/services/oauth2/token";
     }
 
     private static string NormalizeAuthMode(string? authMode)
