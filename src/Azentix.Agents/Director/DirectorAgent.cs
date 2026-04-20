@@ -4,6 +4,7 @@ using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.Extensions.Logging;
+using System.Reflection;
 using System.Text.Json;
 using Azentix.Models;
 
@@ -149,8 +150,7 @@ Rules:
                     AgentThought = thought,
                     AgentAction  = action,
                     ActionResult = observation,
-                    TokensUsed   = response.Metadata?
-                        .GetValueOrDefault("CompletionUsage")?.ToString() ?? "?"
+                    TokensUsed   = GetTokenUsageString(response.Metadata)
                 });
 
                 _logger.LogInformation("ITER {Id} | {Iter} | Thought={Thought} | Action={Action} | Observation={Observation}",
@@ -251,6 +251,7 @@ Rules:
 
         result.CompletedAt     = DateTime.UtcNow;
         result.TotalIterations = iter;
+        result.TotalTokensUsed = SumAuditTokens(result.AuditTrail);
 
         _logger.LogInformation("END {Id} | {Status} | {I} iters | {Ms}ms",
             task.TaskId, result.Status, iter,
@@ -707,6 +708,7 @@ Rules:
 
         result.CompletedAt = DateTime.UtcNow;
         result.TotalIterations = llmIteration;
+        result.TotalTokensUsed = SumAuditTokens(result.AuditTrail);
         return result;
     }
 
@@ -745,8 +747,7 @@ Rules:
 
             var response = await _chat.GetChatMessageContentAsync(history, settings, _kernel, ct);
             var text = response.Content?.Trim();
-            var tokens = response.Metadata?
-                .GetValueOrDefault("CompletionUsage")?.ToString() ?? "?";
+            var tokens = GetTokenUsageString(response.Metadata);
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -793,6 +794,146 @@ Rules:
                 TokensUsed = "0"
             };
         }
+    }
+
+    private static string GetTokenUsageString(IReadOnlyDictionary<string, object?>? metadata)
+    {
+        var count = TryExtractTokenCountFromMetadata(metadata);
+        return count.ToString();
+    }
+
+    private static int TryExtractTokenCountFromMetadata(IReadOnlyDictionary<string, object?>? metadata)
+    {
+        if (metadata is null)
+            return 0;
+
+        if (metadata.TryGetValue("CompletionUsage", out var completionUsage))
+        {
+            var completionTokens = TryExtractTokenCountFromObject(completionUsage);
+            if (completionTokens > 0)
+                return completionTokens;
+        }
+
+        if (metadata.TryGetValue("Usage", out var usage))
+        {
+            var usageTokens = TryExtractTokenCountFromObject(usage);
+            if (usageTokens > 0)
+                return usageTokens;
+        }
+
+        return 0;
+    }
+
+    private static int TryExtractTokenCountFromObject(object? value)
+    {
+        if (value is null)
+            return 0;
+
+        if (value is int i)
+            return i;
+
+        if (value is long l)
+            return l > int.MaxValue ? int.MaxValue : (int)l;
+
+        if (value is JsonElement json)
+            return TryExtractTokenCountFromJsonElement(json);
+
+        if (value is string s)
+            return TryExtractTokenCountFromString(s);
+
+        var type = value.GetType();
+        var candidates = new[] { "TotalTokenCount", "TotalTokens", "total_tokens", "totalTokens" };
+        foreach (var name in candidates)
+        {
+            var prop = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            if (prop is null)
+                continue;
+
+            var propValue = prop.GetValue(value);
+            if (propValue is int pi)
+                return pi;
+            if (propValue is long pl)
+                return pl > int.MaxValue ? int.MaxValue : (int)pl;
+            if (propValue is string ps && int.TryParse(ps, out var psi))
+                return psi;
+        }
+
+        return TryExtractTokenCountFromString(value.ToString() ?? string.Empty);
+    }
+
+    private static int TryExtractTokenCountFromJsonElement(JsonElement json)
+    {
+        if (json.ValueKind != JsonValueKind.Object)
+            return 0;
+
+        var names = new[] { "totalTokenCount", "totalTokens", "total_tokens", "TotalTokenCount", "TotalTokens" };
+        foreach (var name in names)
+        {
+            if (!json.TryGetProperty(name, out var prop))
+                continue;
+
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out var n))
+                return n;
+            if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out var s))
+                return s;
+        }
+
+        return 0;
+    }
+
+    private static int TryExtractTokenCountFromString(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+
+        if (int.TryParse(text, out var direct))
+            return direct;
+
+        if (TryParseJson(text, out var root))
+        {
+            var jsonCount = TryExtractTokenCountFromJsonElement(root);
+            if (jsonCount > 0)
+                return jsonCount;
+        }
+
+        var labels = new[] { "TotalTokenCount", "TotalTokens", "total_tokens", "totalTokens" };
+        foreach (var label in labels)
+        {
+            var idx = text.IndexOf(label, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0)
+                continue;
+
+            var start = idx + label.Length;
+            while (start < text.Length && !char.IsDigit(text[start]))
+                start++;
+
+            if (start >= text.Length)
+                continue;
+
+            var end = start;
+            while (end < text.Length && char.IsDigit(text[end]))
+                end++;
+
+            if (int.TryParse(text[start..end], out var parsed))
+                return parsed;
+        }
+
+        return 0;
+    }
+
+    private static int SumAuditTokens(IEnumerable<AuditEntry> auditTrail)
+    {
+        var total = 0;
+        foreach (var entry in auditTrail)
+        {
+            if (entry is null)
+                continue;
+
+            var count = TryExtractTokenCountFromString(entry.TokensUsed ?? "0");
+            total += Math.Max(0, count);
+        }
+
+        return total;
     }
 
     private async Task<string> InvokeKernelToolAsync(
