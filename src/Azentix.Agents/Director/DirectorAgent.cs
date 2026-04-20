@@ -264,8 +264,6 @@ Rules:
         {
             result.Status = AgentStatus.HumanReviewRequired;
             result.FinalAnswer = "Missing required input: sapMaterialNumber and salesforceProductId are required.";
-            result.CompletedAt = DateTime.UtcNow;
-            result.TotalIterations = 1;
             result.AuditTrail.Add(new AuditEntry
             {
                 Iteration = 1,
@@ -275,7 +273,7 @@ Rules:
                 ActionResult = result.FinalAnswer,
                 TokensUsed = "0"
             });
-            return result;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, 1, ct);
         }
 
         var step = 0;
@@ -323,9 +321,7 @@ Rules:
             result.FinalAnswer =
                 "Salesforce product lookup failed. Review connectivity/auth and product ID before retrying.";
             result.ErrorMessage = productFailureReason;
-            result.CompletedAt = DateTime.UtcNow;
-            result.TotalIterations = step;
-            return result;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
         }
 
         step++;
@@ -352,9 +348,7 @@ Rules:
             result.FinalAnswer =
                 "Salesforce standard pricebook lookup failed. Ensure an active Standard PricebookEntry exists for this product.";
             result.ErrorMessage = pricebookFailureReason;
-            result.CompletedAt = DateTime.UtcNow;
-            result.TotalIterations = step;
-            return result;
+            return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
         }
 
         var currentPrice = TryExtractUnitPrice(pricebookResponse);
@@ -368,9 +362,135 @@ Rules:
             currentPrice is null
                 ? "Salesforce authentication and product retrieval succeeded, and Standard PricebookEntry was found."
                 : $"Salesforce authentication and product retrieval succeeded. Current Standard Pricebook price is {currentPrice.Value}.";
+        return await FinalizeDeterministicResultWithLlmAsync(task, result, step, ct);
+    }
+
+    private async Task<AgentResult> FinalizeDeterministicResultWithLlmAsync(
+        AgentTask task,
+        AgentResult result,
+        int lastIteration,
+        CancellationToken ct)
+    {
+        var llmLayer = await TryBuildLlmPresentationAsync(task, result, ct);
+        var llmIteration = lastIteration + 1;
+
+        result.AuditTrail.Add(new AuditEntry
+        {
+            Iteration = llmIteration,
+            Timestamp = DateTime.UtcNow,
+            AgentThought = "Generate polished business-facing summary from deterministic tool results.",
+            AgentAction = "llm_generate_summary()",
+            ActionResult = llmLayer.AuditResult,
+            TokensUsed = llmLayer.TokensUsed
+        });
+
+        if (llmLayer.Filtered)
+        {
+            result.Status = AgentStatus.HumanReviewRequired;
+            result.FinalAnswer = "Execution requires human review because the LLM output stage was blocked by content filtering.";
+            result.ErrorMessage = llmLayer.ErrorMessage;
+            result.OutputData["llmLayerStatus"] = "content_filter_blocked";
+            result.OutputData["llmLayerError"] = llmLayer.ErrorMessage ?? "content_filter";
+        }
+        else if (!string.IsNullOrWhiteSpace(llmLayer.SummaryText))
+        {
+            result.FinalAnswer = llmLayer.SummaryText;
+            result.OutputData["llmLayerStatus"] = "applied";
+            result.OutputData["llmSummary"] = llmLayer.SummaryText;
+        }
+        else
+        {
+            result.OutputData["llmLayerStatus"] = "fallback_to_deterministic";
+        }
+
         result.CompletedAt = DateTime.UtcNow;
-        result.TotalIterations = step;
+        result.TotalIterations = llmIteration;
         return result;
+    }
+
+    private async Task<LlmSummaryOutcome> TryBuildLlmPresentationAsync(AgentTask task, AgentResult result, CancellationToken ct)
+    {
+        try
+        {
+            var history = new ChatHistory();
+            history.AddSystemMessage("You are an enterprise integration assistant. Rewrite the provided execution outcome into a concise, professional status update. Keep facts unchanged. Never fabricate steps.");
+
+            var deterministicAnswer = result.FinalAnswer ?? "No deterministic answer available.";
+            var errorSummary = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? "none"
+                : result.ErrorMessage!;
+
+            history.AddUserMessage(
+                $"TaskType: {task.TaskType}\n" +
+                $"TaskId: {task.TaskId}\n" +
+                $"Status: {result.Status}\n" +
+                $"DeterministicAnswer: {deterministicAnswer}\n" +
+                $"ErrorSummary: {errorSummary}\n" +
+                "Return 2-4 short sentences. Include root cause when status is HumanReviewRequired.");
+
+            PromptExecutionSettings settings =
+                _cfg.ModelProvider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
+                    ? new OpenAIPromptExecutionSettings
+                    {
+                        MaxTokens = Math.Min(_cfg.MaxTokensPerIteration, 300),
+                        Temperature = 0
+                    }
+                    : new AzureOpenAIPromptExecutionSettings
+                    {
+                        MaxTokens = Math.Min(_cfg.MaxTokensPerIteration, 300),
+                        Temperature = 0
+                    };
+
+            var response = await _chat.GetChatMessageContentAsync(history, settings, _kernel, ct);
+            var text = response.Content?.Trim();
+            var tokens = response.Metadata?
+                .GetValueOrDefault("CompletionUsage")?.ToString() ?? "?";
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return new LlmSummaryOutcome
+                {
+                    SummaryText = null,
+                    Filtered = false,
+                    ErrorMessage = "LLM returned empty summary.",
+                    AuditResult = "empty_summary",
+                    TokensUsed = tokens
+                };
+            }
+
+            return new LlmSummaryOutcome
+            {
+                SummaryText = text,
+                Filtered = false,
+                ErrorMessage = null,
+                AuditResult = text,
+                TokensUsed = tokens
+            };
+        }
+        catch (Exception ex) when (IsContentFilterException(ex))
+        {
+            var detail = ExtractContentFilterDetail(ex);
+            return new LlmSummaryOutcome
+            {
+                SummaryText = null,
+                Filtered = true,
+                ErrorMessage = detail,
+                AuditResult = $"content_filter: {detail}",
+                TokensUsed = "0"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LLM presentation layer failed; using deterministic answer.");
+            return new LlmSummaryOutcome
+            {
+                SummaryText = null,
+                Filtered = false,
+                ErrorMessage = ex.Message,
+                AuditResult = $"llm_error: {ex.Message}",
+                TokensUsed = "0"
+            };
+        }
     }
 
     private async Task<string> InvokeKernelToolAsync(
@@ -540,6 +660,30 @@ Rules:
 
     private static bool IsContentFilterException(Exception ex) =>
         ex.ToString().Contains("content_filter", StringComparison.OrdinalIgnoreCase);
+
+    private static string ExtractContentFilterDetail(Exception ex)
+    {
+        var raw = ex.ToString();
+        var firstLine = raw.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        var detail = string.IsNullOrWhiteSpace(firstLine)
+            ? "Azure OpenAI content filter blocked the LLM output stage."
+            : firstLine.Trim();
+
+        if (detail.Length > 300)
+            detail = detail[..300] + "...";
+
+        return detail;
+    }
+
+    private sealed class LlmSummaryOutcome
+    {
+        public string? SummaryText { get; init; }
+        public bool Filtered { get; init; }
+        public string? ErrorMessage { get; init; }
+        public string AuditResult { get; init; } = string.Empty;
+        public string TokensUsed { get; init; } = "0";
+    }
 
     private static string Extract(string? text, string start, string? end)
     {

@@ -86,8 +86,7 @@ public class SalesforcePlugin
         _log.LogInformation("Salesforce GetPricebook start | ProductId={ProductId}", productId);
         await EnsureAuthAsync();
         var q = $"SELECT Id,UnitPrice,CurrencyIsoCode,IsActive FROM PricebookEntry WHERE Product2Id='{productId}' AND Pricebook2.IsStandard=true AND IsActive=true LIMIT 1";
-        var resp = await _http.GetAsync($"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString(q)}");
-        var body = await resp.Content.ReadAsStringAsync();
+        var (resp, body) = await QueryPricebookWithFallbackAsync(productId, q);
         _log.LogInformation("Salesforce GetPricebook response | Status={Status} | ProductId={ProductId} | BodySnippet={BodySnippet}",
             (int)resp.StatusCode,
             productId,
@@ -154,6 +153,28 @@ public class SalesforcePlugin
             statusCode = (int)resp.StatusCode,
             data = payload
         });
+    }
+
+    private async Task<(HttpResponseMessage Response, string Body)> QueryPricebookWithFallbackAsync(string productId, string queryWithCurrency)
+    {
+        var firstResponse = await _http.GetAsync($"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString(queryWithCurrency)}");
+        var firstBody = await firstResponse.Content.ReadAsStringAsync();
+
+        if (firstResponse.IsSuccessStatusCode ||
+            !firstBody.Contains("No such column 'CurrencyIsoCode'", StringComparison.OrdinalIgnoreCase))
+        {
+            return (firstResponse, firstBody);
+        }
+
+        _log.LogWarning(
+            "Salesforce GetPricebook fallback | ProductId={ProductId} | Reason=CurrencyIsoCode unavailable on PricebookEntry",
+            productId);
+
+        var fallbackQuery =
+            $"SELECT Id,UnitPrice,IsActive FROM PricebookEntry WHERE Product2Id='{productId}' AND Pricebook2.IsStandard=true AND IsActive=true LIMIT 1";
+        var fallbackResponse = await _http.GetAsync($"{_instanceUrl}/services/data/{_cfg.ApiVersion}/query?q={Uri.EscapeDataString(fallbackQuery)}");
+        var fallbackBody = await fallbackResponse.Content.ReadAsStringAsync();
+        return (fallbackResponse, fallbackBody);
     }
 
     [KernelFunction("salesforce_update_price")]
