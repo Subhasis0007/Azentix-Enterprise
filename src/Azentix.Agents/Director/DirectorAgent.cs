@@ -32,7 +32,9 @@ Rules:
 - Always write Thought before Action
 - Never expose credentials
 - Validate data before writing
-- If confidence < 0.7 set status to HumanReviewRequired";
+- If confidence < 0.7 set status to HumanReviewRequired
+- Do not claim service/network/auth failures unless your Observation includes the exact tool response that failed
+- For sap-salesforce-price-sync, you must run tools before any Final Answer";
 
     public DirectorAgent(
         Kernel kernel,
@@ -86,6 +88,7 @@ Rules:
         };
 
         int iter = 0;
+        var noToolFinalAnswerCount = 0;
 
         while (iter < _cfg.MaxIterations)
         {
@@ -139,6 +142,39 @@ Rules:
 
                 if (text.Contains("Final Answer", StringComparison.OrdinalIgnoreCase))
                 {
+                    var requiresToolExecution = RequiresToolExecution(task.TaskType);
+                    var hasAction = !string.IsNullOrWhiteSpace(action);
+                    var hasObservation = !string.IsNullOrWhiteSpace(observation);
+                    var actionLooksLikeToolCall = LooksLikeToolAction(action);
+                    var hasRequiredDomainToolAction = HasSapSalesforceDomainAction(action);
+
+                    if (requiresToolExecution &&
+                        (!hasAction ||
+                         !hasObservation ||
+                         !actionLooksLikeToolCall ||
+                         !hasRequiredDomainToolAction))
+                    {
+                        noToolFinalAnswerCount++;
+                        _logger.LogWarning(
+                            "ITER {Id} | {Iter} | Final answer blocked. Requires real tool action and observation. Action={Action} | ObservationEmpty={ObservationEmpty} | Count={Count}",
+                            task.TaskId,
+                            iter,
+                            action,
+                            string.IsNullOrWhiteSpace(observation),
+                            noToolFinalAnswerCount);
+
+                        if (noToolFinalAnswerCount >= 2)
+                        {
+                            result.Status = AgentStatus.HumanReviewRequired;
+                            result.FinalAnswer =
+                                "The task was stopped because the director produced final answers without running required tool calls. Review model tool-calling behavior and integration plugin outputs in logs.";
+                            break;
+                        }
+
+                        history.AddUserMessage(BuildToolExecutionReminder(task.TaskType));
+                        continue;
+                    }
+
                     result.FinalAnswer = Extract(text, "Final Answer:", null);
                     result.Status = DirectorTaskRules.InferFinalStatus(text, result.FinalAnswer);
                     break;
@@ -172,7 +208,59 @@ Rules:
         $"TASK_ID: {t.TaskId}\nTYPE: {t.TaskType}\nPRIORITY: {t.Priority}\n" +
         $"DESCRIPTION: {t.Description}\nCONTEXT: {t.Context}\n" +
         $"INPUT: {System.Text.Json.JsonSerializer.Serialize(t.InputData)}\n\n" +
+        BuildTaskSpecificGuidance(t.TaskType) + "\n\n" +
         "Begin. Write your first Thought:";
+
+    private static bool RequiresToolExecution(string taskType) =>
+        taskType.Equals("sap-salesforce-price-sync", StringComparison.OrdinalIgnoreCase);
+
+    private static string BuildTaskSpecificGuidance(string taskType)
+    {
+        if (taskType.Equals("sap-salesforce-price-sync", StringComparison.OrdinalIgnoreCase))
+        {
+            return "For sap-salesforce-price-sync, call tools in this order before Final Answer: " +
+                   "1) sap_get_material 2) salesforce_get_product 3) salesforce_get_pricebook " +
+                   "4) salesforce_update_price when governance allows update. " +
+                   "If any call fails, include the exact failing tool response in Observation. " +
+                   "Do not use rabbitmq_publish for this task; queue handling is external to this execution.";
+        }
+
+        return "";
+    }
+
+    private static string BuildToolExecutionReminder(string taskType)
+    {
+        if (taskType.Equals("sap-salesforce-price-sync", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Your previous response included Final Answer without required tool execution. " +
+                   "Run at least sap_get_material, salesforce_get_product, and salesforce_get_pricebook first. " +
+                   "Then provide Thought/Action/Observation with the exact tool output. " +
+                   "Do not set status directly and do not call rabbitmq_publish.";
+        }
+
+        return "Your previous response included Final Answer without required Action/Observation. " +
+               "Continue with Thought, Action, and Observation.";
+    }
+
+    private static bool LooksLikeToolAction(string action)
+    {
+        if (string.IsNullOrWhiteSpace(action))
+            return false;
+
+        var normalized = action.Trim();
+        return normalized.Contains('(') && normalized.Contains(')');
+    }
+
+    private static bool HasSapSalesforceDomainAction(string action)
+    {
+        if (string.IsNullOrWhiteSpace(action))
+            return false;
+
+        return action.Contains("sap_get_material", StringComparison.OrdinalIgnoreCase) ||
+               action.Contains("salesforce_get_product", StringComparison.OrdinalIgnoreCase) ||
+               action.Contains("salesforce_get_pricebook", StringComparison.OrdinalIgnoreCase) ||
+               action.Contains("salesforce_update_price", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string Extract(string? text, string start, string? end)
     {
