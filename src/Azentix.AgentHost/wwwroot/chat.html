@@ -100,14 +100,76 @@
     .history-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 2px; }
 
     .hist-item {
+      position: relative;
       padding: 8px 10px; border-radius: 7px;
       font-size: 12.5px; color: var(--muted);
       cursor: pointer; transition: all .12s;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      padding-right: 28px;
       margin-bottom: 2px;
     }
     .hist-item:hover { background: var(--surface2); color: var(--text); }
     .hist-item.active { background: var(--surface3); color: var(--text); }
+    .hist-label {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hist-delete {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .hist-item:hover .hist-delete,
+    .hist-item.active .hist-delete {
+      display: inline-flex;
+    }
+    .hist-delete:hover {
+      background: rgba(252,129,129,.12);
+      color: var(--red);
+    }
+    .context-menu {
+      position: fixed;
+      z-index: 1000;
+      min-width: 170px;
+      background: var(--surface2);
+      border: 1px solid var(--border-hi);
+      border-radius: 8px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.35);
+      padding: 6px;
+      display: none;
+    }
+    .context-menu.open { display: block; }
+    .context-item {
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .context-item:hover {
+      background: rgba(252,129,129,.12);
+      color: var(--red);
+    }
 
     .sidebar-footer {
       padding: 14px 18px;
@@ -506,10 +568,14 @@ let totalTokens = 0;
 let isStreaming = false;
 let conversationHistory = [];
 let _sseSource = null;
+let _historyCounter = 0;
+let _contextTargetHistoryId = null;
 
 // ── Init ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   autoGrow();
+  initializeHistoryList();
+  setupContextMenu();
   checkStatus();
   setInterval(checkStatus, 30000);
 
@@ -829,16 +895,134 @@ function scrollBottom() {
 // ── History ───────────────────────────────────────────────────────────────
 function addToHistory(label) {
   const list = document.getElementById('historyList');
+  const item = createHistoryItem(label);
+  setActiveHistoryItem(item);
+  list.prepend(item);
+}
+
+function initializeHistoryList() {
+  const list = document.getElementById('historyList');
+  const labels = Array.from(list.querySelectorAll('.hist-item'))
+    .map(i => i.textContent.trim())
+    .filter(Boolean);
+
+  list.innerHTML = '';
+  if (labels.length === 0) labels.push('Getting started');
+
+  labels.forEach((label, index) => {
+    const item = createHistoryItem(label);
+    if (index === 0) item.classList.add('active');
+    list.appendChild(item);
+  });
+}
+
+function createHistoryItem(label) {
+  _historyCounter += 1;
   const item = document.createElement('div');
   item.className = 'hist-item';
-  item.textContent = label;
-  item.onclick = () => {
-    document.querySelectorAll('.hist-item').forEach(i => i.classList.remove('active'));
-    item.classList.add('active');
+  item.dataset.historyId = String(_historyCounter);
+  item.innerHTML = `
+    <span class="hist-label">${escapeHtml(label)}</span>
+    <button class="hist-delete" title="Delete conversation" aria-label="Delete conversation">×</button>
+  `;
+
+  item.onclick = (e) => {
+    if (e.target.closest('.hist-delete')) return;
+    setActiveHistoryItem(item);
   };
-  list.querySelectorAll('.hist-item').forEach(i => i.classList.remove('active'));
-  item.classList.add('active');
-  list.prepend(item);
+
+  item.oncontextmenu = (e) => {
+    e.preventDefault();
+    setActiveHistoryItem(item);
+    openHistoryContextMenu(e.clientX, e.clientY, item.dataset.historyId);
+  };
+
+  const delBtn = item.querySelector('.hist-delete');
+  delBtn.onclick = (e) => deleteHistoryItem(e, item.dataset.historyId);
+
+  return item;
+}
+
+function setActiveHistoryItem(activeItem) {
+  document.querySelectorAll('.hist-item').forEach(i => i.classList.remove('active'));
+  activeItem.classList.add('active');
+}
+
+function deleteHistoryItem(event, historyId) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const list = document.getElementById('historyList');
+  const item = Array.from(list.querySelectorAll('.hist-item'))
+    .find(i => i.dataset.historyId === historyId);
+  if (!item) return;
+
+  const wasActive = item.classList.contains('active');
+  item.remove();
+
+  if (list.children.length === 0) {
+    const fallback = createHistoryItem('Getting started');
+    fallback.classList.add('active');
+    list.appendChild(fallback);
+    return;
+  }
+
+  if (wasActive) {
+    list.firstElementChild.classList.add('active');
+  }
+
+  closeHistoryContextMenu();
+}
+
+function setupContextMenu() {
+  const menu = document.getElementById('historyContextMenu');
+  const deleteBtn = document.getElementById('historyContextDelete');
+
+  deleteBtn.onclick = (e) => {
+    if (!_contextTargetHistoryId) return;
+    deleteHistoryItem(e, _contextTargetHistoryId);
+  };
+
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('open')) return;
+    if (e.target.closest('#historyContextMenu')) return;
+    closeHistoryContextMenu();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeHistoryContextMenu();
+  });
+
+  document.addEventListener('scroll', () => closeHistoryContextMenu(), true);
+  window.addEventListener('resize', () => closeHistoryContextMenu());
+}
+
+function openHistoryContextMenu(x, y, historyId) {
+  const menu = document.getElementById('historyContextMenu');
+  _contextTargetHistoryId = historyId;
+
+  menu.classList.add('open');
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const rect = menu.getBoundingClientRect();
+
+  let left = x;
+  let top = y;
+
+  if (left + rect.width > vw - 8) left = vw - rect.width - 8;
+  if (top + rect.height > vh - 8) top = vh - rect.height - 8;
+  if (left < 8) left = 8;
+  if (top < 8) top = 8;
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeHistoryContextMenu() {
+  const menu = document.getElementById('historyContextMenu');
+  menu.classList.remove('open');
+  _contextTargetHistoryId = null;
 }
 
 function newChat() {
@@ -905,5 +1089,8 @@ function toggleSettings() {
   }
 }
 </script>
+<div class="context-menu" id="historyContextMenu" role="menu" aria-label="Conversation actions">
+  <button class="context-item" id="historyContextDelete" type="button" role="menuitem">Delete conversation</button>
+</div>
 </body>
 </html>
