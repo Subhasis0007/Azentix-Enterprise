@@ -2,8 +2,7 @@ services:
   - type: web
     name: azentix-itops-api
     runtime: docker
-    dockerfilePath: ./src/Azentix.AgentHost/Dockerfile
-    rootDir: .
+    rootDir: src/Azentix.AgentHost
     autoDeploy: true
     healthCheckPath: /health
     envVars:
@@ -57,9 +56,9 @@ services:
   - type: worker
     name: azentix-langgraph-worker
     runtime: python
-    rootDir: .
-    buildCommand: pip install -r src/langgraph/requirements.txt
-    startCommand: python src/langgraph/worker.py
+    rootDir: src/langgraph
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py
     autoDeploy: true
     envVars:
       - key: CLOUDAMQP_URL
