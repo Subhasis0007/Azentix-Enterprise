@@ -21,6 +21,6 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "forwardPorts": [5000, 8000, 8001, 5678, 3000],
+  "forwardPorts": [5000, 8000, 8001, 3000],
   "remoteEnv": { "DOTNET_CLI_TELEMETRY_OPTOUT": "1" }
 }

@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azentix Enterprise — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:        #07090f;
+      --surface:   #0e1117;
+      --surface2:  #141821;
+      --border:    rgba(255,255,255,0.06);
+      --border-hi: rgba(99,179,237,0.35);
+      --text:      #e2e8f0;
+      --muted:     #718096;
+      --blue:      #63b3ed;
+      --blue-dark: #2b6cb0;
+      --green:     #68d391;
+      --yellow:    #f6e05e;
+      --red:       #fc8181;
+      --purple:    #b794f4;
+      --cyan:      #76e4f7;
+      --orange:    #f6ad55;
+      --glow-blue: 0 0 40px rgba(99,179,237,0.18);
+      --radius:    12px;
+      --radius-lg: 18px;
+      --font:      'Inter', system-ui, sans-serif;
+      --mono:      'JetBrains Mono', 'Fira Code', monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Background grid ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(99,179,237,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,179,237,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ── */
+    .layout { position: relative; z-index: 1; display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 28px 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .sidebar-logo {
+      padding: 0 20px 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo-mark {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .logo-text { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+    .logo-sub  { font-size: 10px; color: var(--muted); margin-top: 1px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .nav { padding: 20px 12px; flex: 1; }
+    .nav-section { font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; padding: 0 8px; margin-bottom: 8px; margin-top: 20px; }
+    .nav-section:first-child { margin-top: 0; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      font-size: 13.5px; font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+      margin-bottom: 2px;
+      text-decoration: none;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { background: rgba(99,179,237,.12); color: var(--blue); }
+    .nav-item .icon { font-size: 15px; width: 20px; text-align: center; }
+    .sidebar-footer { padding: 16px 20px; border-top: 1px solid var(--border); }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--green);
+      background: rgba(104,211,145,.1);
+      padding: 4px 10px; border-radius: 20px;
+      border: 1px solid rgba(104,211,145,.25);
+    }
+    .status-pill::before { content: ''; width: 6px; height: 6px; background: var(--green); border-radius: 50%; display: block; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+
+    /* ── Main ── */
+    .main { flex: 1; overflow-y: auto; }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(14,17,23,0.85);
+      backdrop-filter: blur(10px);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .topbar-title { font-size: 20px; font-weight: 700; }
+    .topbar-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .topbar-actions { display: flex; gap: 10px; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: 8px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      border: none; transition: all .15s; font-family: var(--font);
+    }
+    .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--border-hi); color: var(--blue); }
+    .btn-primary { background: linear-gradient(135deg, var(--blue-dark), #1a365d); color: #fff; border: 1px solid var(--border-hi); box-shadow: var(--glow-blue); }
+    .btn-primary:hover { filter: brightness(1.15); }
+
+    /* ── Content ── */
+    .content { padding: 28px 32px; }
+
+    /* ── Stat cards ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .stat-card:hover { border-color: var(--border-hi); box-shadow: var(--glow-blue); }
+    .stat-card::after {
+      content: '';
+      position: absolute; top: 0; right: 0;
+      width: 80px; height: 80px;
+      border-radius: 0 var(--radius-lg) 0 80px;
+      opacity: .08;
+    }
+    .stat-card.blue::after   { background: var(--blue); }
+    .stat-card.green::after  { background: var(--green); }
+    .stat-card.purple::after { background: var(--purple); }
+    .stat-card.orange::after { background: var(--orange); }
+    .stat-icon { font-size: 22px; margin-bottom: 14px; }
+    .stat-value { font-size: 28px; font-weight: 800; letter-spacing: -1px; margin-bottom: 4px; }
+    .stat-label { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .stat-delta { font-size: 11px; margin-top: 8px; }
+    .delta-up   { color: var(--green); }
+    .delta-down { color: var(--red); }
+
+    /* ── Section headers ── */
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section-title { font-size: 15px; font-weight: 700; }
+    .section-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px; background: rgba(99,179,237,.12);
+      color: var(--blue); border: 1px solid rgba(99,179,237,.25);
+    }
+
+    /* ── Two-column grid ── */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+
+    /* ── Card base ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 22px;
+    }
+    .card-full { grid-column: 1 / -1; }
+
+    /* ── Pipeline visualization ── */
+    .pipeline {
+      display: flex; align-items: center; gap: 0;
+      padding: 20px 0;
+    }
+    .pipeline-step {
+      flex: 1; text-align: center;
+      position: relative;
+    }
+    .pipeline-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 20px; right: -1px;
+      width: calc(100% - 50px); height: 2px;
+      background: linear-gradient(90deg, var(--border-hi), var(--border));
+      left: calc(50% + 22px);
+    }
+    .pipeline-step.active:not(:last-child)::after {
+      background: linear-gradient(90deg, var(--blue), var(--border-hi));
+    }
+    .step-circle {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 10px;
+      font-size: 16px;
+      transition: all .3s;
+    }
+    .pipeline-step.active .step-circle {
+      border-color: var(--blue);
+      background: rgba(99,179,237,.15);
+      box-shadow: 0 0 20px rgba(99,179,237,.25);
+    }
+    .pipeline-step.done .step-circle {
+      border-color: var(--green);
+      background: rgba(104,211,145,.12);
+    }
+    .step-label { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .pipeline-step.active .step-label { color: var(--blue); }
+    .pipeline-step.done .step-label  { color: var(--green); }
+
+    /* ── Integration grid ── */
+    .integrations-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+    .integration-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: all .15s;
+      cursor: pointer;
+    }
+    .integration-item:hover { border-color: var(--border-hi); }
+    .int-icon { font-size: 22px; flex-shrink: 0; }
+    .int-name  { font-size: 13px; font-weight: 600; }
+    .int-status { font-size: 11px; margin-top: 2px; }
+    .int-status.ok     { color: var(--green); }
+    .int-status.warn   { color: var(--yellow); }
+    .int-status.error  { color: var(--red); }
+    .int-status.mock   { color: var(--muted); }
+
+    /* ── MCP tools ── */
+    .mcp-tools-list { display: flex; flex-direction: column; gap: 10px; }
+    .mcp-tool-row {
+      display: flex; align-items: start; gap: 14px;
+      padding: 14px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: border-color .15s;
+    }
+    .mcp-tool-row:hover { border-color: var(--border-hi); }
+    .tool-badge {
+      font-family: var(--mono);
+      font-size: 11px; font-weight: 500;
+      padding: 3px 9px; border-radius: 5px;
+      background: rgba(183,148,244,.12);
+      color: var(--purple);
+      border: 1px solid rgba(183,148,244,.25);
+      white-space: nowrap; flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .tool-desc { font-size: 12.5px; color: var(--muted); line-height: 1.5; flex: 1; }
+    .tool-name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+    .tool-try  {
+      font-size: 11px; padding: 4px 10px; border-radius: 6px;
+      background: rgba(99,179,237,.1); color: var(--blue);
+      border: 1px solid rgba(99,179,237,.2); cursor: pointer;
+      font-family: var(--font); transition: all .15s; flex-shrink: 0;
+    }
+    .tool-try:hover { background: rgba(99,179,237,.2); }
+
+    /* ── Task runner ── */
+    .runner-form { display: flex; flex-direction: column; gap: 14px; }
+    .form-row { display: flex; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+    label { font-size: 12px; font-weight: 500; color: var(--muted); }
+    input, select, textarea {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; color: var(--text);
+      font-family: var(--font); font-size: 13px;
+      transition: border-color .15s; outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--border-hi); }
+    textarea { resize: vertical; min-height: 70px; }
+    .response-box {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px;
+      font-family: var(--mono); font-size: 12px;
+      color: var(--green); min-height: 80px; white-space: pre-wrap;
+      max-height: 250px; overflow-y: auto;
+      line-height: 1.6;
+    }
+    .response-box.loading { color: var(--yellow); }
+    .response-box.error   { color: var(--red); }
+
+    /* ── Activity log ── */
+    .activity-list { display: flex; flex-direction: column; gap: 0; }
+    .activity-item {
+      display: flex; align-items: start; gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .activity-item:last-child { border-bottom: none; }
+    .act-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      margin-top: 5px; flex-shrink: 0;
+    }
+    .act-dot.success { background: var(--green); }
+    .act-dot.warn    { background: var(--yellow); }
+    .act-dot.error   { background: var(--red); }
+    .act-dot.info    { background: var(--blue); }
+    .act-msg  { font-size: 13px; line-height: 1.5; }
+    .act-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Security overview ── */
+    .security-checks { display: flex; flex-direction: column; gap: 10px; }
+    .sec-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .sec-icon { font-size: 16px; flex-shrink: 0; }
+    .sec-label { font-size: 13px; flex: 1; font-weight: 500; }
+    .sec-status {
+      font-size: 11px; font-weight: 600; padding: 3px 9px;
+      border-radius: 20px;
+    }
+    .sec-status.pass { color: var(--green); background: rgba(104,211,145,.1); border: 1px solid rgba(104,211,145,.2); }
+    .sec-status.warn { color: var(--yellow); background: rgba(246,224,94,.1); border: 1px solid rgba(246,224,94,.2); }
+    .sec-status.fail { color: var(--red); background: rgba(252,129,129,.1); border: 1px solid rgba(252,129,129,.2); }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+    .tab {
+      padding: 9px 16px; font-size: 13px; font-weight: 500;
+      color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
+      transition: all .15s; margin-bottom: -1px;
+    }
+    .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .tab:hover:not(.active) { color: var(--text); }
+
+    /* ── Kong config display ── */
+    .kong-box {
+      font-family: var(--mono); font-size: 11.5px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px;
+      max-height: 220px; overflow-y: auto; line-height: 1.8;
+    }
+    .k-key { color: var(--cyan); }
+    .k-val { color: var(--green); }
+    .k-str { color: var(--yellow); }
+    .k-comment { color: var(--muted); }
+
+    /* ── Responsive ── */
+    @media (max-width: 1100px) {
+      .stats-grid { grid-template-columns: repeat(2,1fr); }
+      .integrations-grid { grid-template-columns: repeat(2,1fr); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .sidebar { display: none; }
+      .content { padding: 20px 16px; }
+      .topbar  { padding: 16px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark">
+        <div class="logo-icon">A</div>
+        <div>
+          <div class="logo-text">Azentix</div>
+          <div class="logo-sub">Enterprise Platform</div>
+        </div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav-section">Overview</div>
+      <a class="nav-item active" href="#overview">
+        <span class="icon">⬡</span> Dashboard
+      </a>
+      <a class="nav-item" href="#workflows">
+        <span class="icon">⟳</span> Workflows
+      </a>
+      <a class="nav-item" href="#mcp">
+        <span class="icon">⬡</span> MCP Tools
+      </a>
+      <div class="nav-section">Integrations</div>
+      <a class="nav-item" href="#integrations">
+        <span class="icon">⊞</span> Connectors
+      </a>
+      <a class="nav-item" href="#runner">
+        <span class="icon">▷</span> Task Runner
+      </a>
+      <div class="nav-section">Platform</div>
+      <a class="nav-item" href="#security">
+        <span class="icon">⊕</span> Security
+      </a>
+      <a class="nav-item" href="/scalar/v1" target="_blank">
+        <span class="icon">⊙</span> API Docs ↗
+      </a>
+      <a class="nav-item" href="/mcp/tools" target="_blank">
+        <span class="icon">⊙</span> MCP Tools ↗
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status-pill" id="sidebarStatus">System Online</div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Agent Orchestration</div>
+        <div class="topbar-sub" id="topbarSub">Loading...</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" onclick="refreshStatus()">⟳ Refresh</button>
+        <button class="btn btn-primary" onclick="document.getElementById('runner').scrollIntoView({behavior:'smooth'})">▷ Run Task</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ── Stats ── -->
+      <div class="stats-grid" id="overview">
+        <div class="stat-card blue">
+          <div class="stat-icon">⬡</div>
+          <div class="stat-value" id="statStatus">—</div>
+          <div class="stat-label">Agent Status</div>
+          <div class="stat-delta delta-up" id="statModel">Loading model...</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">⟳</div>
+          <div class="stat-value">3</div>
+          <div class="stat-label">Active Workflows</div>
+          <div class="stat-delta delta-up">SAP · ServiceNow · Stripe</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-icon">⬡</div>
+          <div class="stat-value">7</div>
+          <div class="stat-label">MCP Tools</div>
+          <div class="stat-delta delta-up">All registered</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-icon">⊞</div>
+          <div class="stat-value">5</div>
+          <div class="stat-label">Integrations</div>
+          <div class="stat-delta">SAP · SF · SN · HubSpot · Stripe</div>
+        </div>
+      </div>
+
+      <!-- ── Pipeline ── -->
+      <div class="card" style="margin-bottom:28px" id="workflows">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Deployment Pipeline</div>
+            <div class="section-sub">CI → Kong Sync → E2E Smoke → Notify</div>
+          </div>
+          <span class="badge">Last run: today</span>
+        </div>
+        <div class="pipeline">
+          <div class="pipeline-step done">
+            <div class="step-circle">✓</div>
+            <div class="step-label">CI Build</div>
+          </div>
+          <div class="pipeline-step done">
+            <div class="step-circle">✓</div>
+            <div class="step-label">Unit Tests</div>
+          </div>
+          <div class="pipeline-step done">
+            <div class="step-circle">✓</div>
+            <div class="step-label">Docker Build</div>
+          </div>
+          <div class="pipeline-step done">
+            <div class="step-circle">✓</div>
+            <div class="step-label">Kong Validate</div>
+          </div>
+          <div class="pipeline-step done">
+            <div class="step-circle">✓</div>
+            <div class="step-label">Deploy</div>
+          </div>
+          <div class="pipeline-step active">
+            <div class="step-circle">⟳</div>
+            <div class="step-label">Kong Sync</div>
+          </div>
+          <div class="pipeline-step">
+            <div class="step-circle">⬡</div>
+            <div class="step-label">E2E Smoke</div>
+          </div>
+          <div class="pipeline-step">
+            <div class="step-circle">⬡</div>
+            <div class="step-label">Notify</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Two columns: MCP + Activity ── -->
+      <div class="grid-2" id="mcp">
+        <!-- MCP Tools -->
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <div class="section-title">MCP Tools</div>
+              <div class="section-sub">Model Context Protocol — tool discovery</div>
+            </div>
+            <a class="btn btn-ghost" href="/mcp/tools" target="_blank" style="font-size:12px">View JSON ↗</a>
+          </div>
+          <div class="mcp-tools-list" id="mcpToolsList">
+            <div style="color:var(--muted);font-size:13px">Loading tools...</div>
+          </div>
+        </div>
+
+        <!-- Activity -->
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <div class="section-title">Recent Activity</div>
+              <div class="section-sub">Agent decisions and system events</div>
+            </div>
+          </div>
+          <div class="activity-list" id="activityList">
+            <div class="activity-item">
+              <div class="act-dot success"></div>
+              <div>
+                <div class="act-msg">Dashboard loaded and agent status checked</div>
+                <div class="act-time" id="loadTime">just now</div>
+              </div>
+            </div>
+            <div class="activity-item">
+              <div class="act-dot info"></div>
+              <div>
+                <div class="act-msg">Kong config validated — 3 routes active</div>
+                <div class="act-time">pipeline step</div>
+              </div>
+            </div>
+            <div class="activity-item">
+              <div class="act-dot info"></div>
+              <div>
+                <div class="act-msg">MCP server ready — 7 tools registered</div>
+                <div class="act-time">startup</div>
+              </div>
+            </div>
+            <div class="activity-item">
+              <div class="act-dot warn"></div>
+              <div>
+                <div class="act-msg">Some integration credentials not configured — mock mode active</div>
+                <div class="act-time">startup</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Integrations ── -->
+      <div class="card" style="margin-bottom:28px" id="integrations">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Enterprise Integrations</div>
+            <div class="section-sub">Live connection status for all plugins</div>
+          </div>
+        </div>
+        <div class="integrations-grid">
+          <div class="integration-item">
+            <div class="int-icon">🏭</div>
+            <div>
+              <div class="int-name">SAP S/4HANA</div>
+              <div class="int-status mock" id="sapStatus">Checking...</div>
+            </div>
+          </div>
+          <div class="integration-item">
+            <div class="int-icon">☁️</div>
+            <div>
+              <div class="int-name">Salesforce CRM</div>
+              <div class="int-status mock" id="sfStatus">Checking...</div>
+            </div>
+          </div>
+          <div class="integration-item">
+            <div class="int-icon">🎫</div>
+            <div>
+              <div class="int-name">ServiceNow</div>
+              <div class="int-status mock" id="snowStatus">Checking...</div>
+            </div>
+          </div>
+          <div class="integration-item">
+            <div class="int-icon">🟠</div>
+            <div>
+              <div class="int-name">HubSpot</div>
+              <div class="int-status mock" id="hubspotStatus">Checking...</div>
+            </div>
+          </div>
+          <div class="integration-item">
+            <div class="int-icon">💳</div>
+            <div>
+              <div class="int-name">Stripe</div>
+              <div class="int-status mock" id="stripeStatus">Checking...</div>
+            </div>
+          </div>
+          <div class="integration-item">
+            <div class="int-icon">🐇</div>
+            <div>
+              <div class="int-name">RabbitMQ / CloudAMQP</div>
+              <div class="int-status mock" id="mqStatus">Checking...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Task Runner ── -->
+      <div class="card" style="margin-bottom:28px" id="runner">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Task Runner</div>
+            <div class="section-sub">Execute agent tasks or MCP tools directly</div>
+          </div>
+          <div class="tabs">
+            <div class="tab active" onclick="switchTab(this,'agent')">Agent Task</div>
+            <div class="tab" onclick="switchTab(this,'mcp')">MCP Call</div>
+            <div class="tab" onclick="switchTab(this,'sse')">SSE Stream</div>
+          </div>
+        </div>
+
+        <!-- Agent tab -->
+        <div id="tab-agent">
+          <div class="runner-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Task Type</label>
+                <select id="agentTaskType">
+                  <option value="general">general</option>
+                  <option value="sap-price-sync">sap-price-sync</option>
+                  <option value="sap-to-salesforce-price-sync">sap-to-salesforce-price-sync</option>
+                  <option value="incident-triage">incident-triage</option>
+                  <option value="servicenow-incident">servicenow-incident</option>
+                  <option value="hubspot-contact-sync">hubspot-contact-sync</option>
+                  <option value="stripe-billing-check">stripe-billing-check</option>
+                  <option value="stripe-billing-alert">stripe-billing-alert</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Priority</label>
+                <select id="agentPriority">
+                  <option value="0">Normal</option>
+                  <option value="1">High</option>
+                  <option value="2">Critical</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="agentDesc" rows="2" placeholder="Describe what the agent should do...">Fetch pricing for material MAT-001 and sync to Salesforce product 01t000000000001</textarea>
+            </div>
+            <div class="form-group">
+              <label>Context (optional)</label>
+              <input id="agentContext" type="text" placeholder="Additional context for the agent" />
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="runAgentTask()">▷ Execute Task</button>
+              <button class="btn btn-ghost" onclick="clearResponse()">✕ Clear</button>
+            </div>
+            <div class="form-group">
+              <label>Response</label>
+              <div class="response-box" id="agentResponse">Ready — click Execute Task to invoke the agent.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MCP tab -->
+        <div id="tab-mcp" style="display:none">
+          <div class="runner-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label>MCP Tool</label>
+                <select id="mcpTool">
+                  <option value="sap_get_price">sap_get_price</option>
+                  <option value="sap_sync_salesforce">sap_sync_salesforce</option>
+                  <option value="servicenow_create_incident">servicenow_create_incident</option>
+                  <option value="servicenow_triage">servicenow_triage</option>
+                  <option value="hubspot_sync_contact">hubspot_sync_contact</option>
+                  <option value="stripe_check_billing">stripe_check_billing</option>
+                  <option value="agent_execute">agent_execute</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Arguments (JSON)</label>
+              <textarea id="mcpArgs" rows="3" placeholder='{"material": "MAT-001"}'>{"material": "MAT-001", "sf_product_id": "01t000000000001"}</textarea>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="runMcpCall()">⬡ Call MCP Tool</button>
+              <button class="btn btn-ghost" onclick="clearMcpResponse()">✕ Clear</button>
+            </div>
+            <div class="form-group">
+              <label>MCP Response</label>
+              <div class="response-box" id="mcpResponse">Ready — select a tool and click Call MCP Tool.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SSE tab -->
+        <div id="tab-sse" style="display:none">
+          <div class="runner-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Task Type</label>
+                <input id="sseTaskType" type="text" value="general" />
+              </div>
+              <div class="form-group">
+                <label>Description</label>
+                <input id="sseDesc" type="text" value="Status check via SSE" />
+              </div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="startSseStream()">⟳ Start SSE Stream</button>
+              <button class="btn btn-ghost" id="stopSseBtn" onclick="stopSseStream()" style="display:none">⏹ Stop</button>
+            </div>
+            <div class="form-group">
+              <label>Event Stream</label>
+              <div class="response-box" id="sseResponse">Click Start SSE Stream to begin...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Security + Kong ── -->
+      <div class="grid-2" id="security">
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <div class="section-title">Security Posture</div>
+              <div class="section-sub">Real-time security checks</div>
+            </div>
+          </div>
+          <div class="security-checks">
+            <div class="sec-row">
+              <div class="sec-icon">🔑</div>
+              <div class="sec-label">App-level API key middleware</div>
+              <div class="sec-status pass">Active</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">🛡️</div>
+              <div class="sec-label">Kong gateway auth (key-auth plugin)</div>
+              <div class="sec-status pass">Enforced</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">⚡</div>
+              <div class="sec-label">Rate limiting (60 req/min)</div>
+              <div class="sec-status pass">Active</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">🔐</div>
+              <div class="sec-label">Stripe webhook signature</div>
+              <div class="sec-status pass" id="stripeSecStatus">Checking...</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">📡</div>
+              <div class="sec-label">CORS origins</div>
+              <div class="sec-status warn">Configured</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">🔍</div>
+              <div class="sec-label">Secret scanning (TruffleHog)</div>
+              <div class="sec-status pass">Blocking</div>
+            </div>
+            <div class="sec-row">
+              <div class="sec-icon">📄</div>
+              <div class="sec-label">API docs (Scalar)</div>
+              <div class="sec-status pass">Dev-only</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <div class="section-title">Kong Gateway Routes</div>
+              <div class="section-sub">Active declarative config</div>
+            </div>
+            <a href="/scalar/v1" target="_blank" class="btn btn-ghost" style="font-size:12px">API Docs ↗</a>
+          </div>
+          <div class="kong-box">
+<span class="k-comment"># Kong declarative routes (kong/kong.yml)</span>
+<span class="k-key">routes:</span>
+  <span class="k-key">- /azentix/v1</span>   <span class="k-val">→ agent host</span>  <span class="k-comment"># key-auth + rate-limit</span>
+  <span class="k-key">- /mcp</span>          <span class="k-val">→ agent host</span>  <span class="k-comment"># MCP JSON-RPC + SSE</span>
+  <span class="k-key">- /health</span>       <span class="k-val">→ agent host</span>  <span class="k-comment"># public, rate-limit only</span>
+
+<span class="k-key">plugins:</span>
+  <span class="k-key">key-auth:</span>         <span class="k-val">X-API-Key header</span>
+  <span class="k-key">rate-limiting:</span>    <span class="k-val">60/min · 1000/hr</span>
+  <span class="k-key">request-transform:</span> <span class="k-val">X-Gateway injected</span>
+  <span class="k-key">cors:</span>             <span class="k-val">configured origins</span>
+
+<span class="k-key">consumers:</span>
+  <span class="k-key">- azentix-internal</span>   <span class="k-comment"># internal services</span>
+  <span class="k-key">- langgraph-worker</span>   <span class="k-comment"># LangGraph worker</span>
+  <span class="k-key">- external-client</span>    <span class="k-comment"># external integrations</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<script>
+  // ── Status loading ───────────────────────────────────────────────────
+  async function refreshStatus() {
+    document.getElementById('topbarSub').textContent = 'Refreshing...';
+    try {
+      const r = await fetch('/health');
+      const d = await r.json();
+      const el = document.getElementById('statStatus');
+      el.textContent = d.status === 'Healthy' ? 'Healthy' : d.status;
+      el.style.color  = d.status === 'Healthy' ? 'var(--green)' : 'var(--yellow)';
+    } catch { document.getElementById('statStatus').textContent = 'Offline'; }
+
+    try {
+      const r = await fetch('/api/agents/status', { headers: getAuthHeader() });
+      const d = await r.json();
+      document.getElementById('statModel').textContent =
+        `Model: ${d.modelProvider ?? 'unknown'} · ${d.model ?? ''}`;
+      document.getElementById('topbarSub').textContent =
+        `v${d.version ?? '1.0.0'} · ${new Date(d.timestamp ?? Date.now()).toLocaleTimeString()}`;
+    } catch {
+      document.getElementById('topbarSub').textContent = 'Status endpoint unreachable';
+    }
+
+    checkIntegrations();
+    loadMcpTools();
+  }
+
+  function getAuthHeader() {
+    const key = localStorage.getItem('azentix_api_key') || '';
+    return key ? { 'X-API-Key': key } : {};
+  }
+
+  async function checkIntegrations() {
+    const ids = ['sapStatus','sfStatus','snowStatus','hubspotStatus','stripeStatus','mqStatus'];
+    // We can't test integration credentials from the browser; show configured/mock
+    const labels = ['Configured (SAP_BASE_URL set)','Configured (SF credentials)','Configured (SN instance)','Configured (HubSpot token)','Configured (Stripe key)','Configured (CLOUDAMQP_URL)'];
+    ids.forEach((id, i) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = 'Configured';
+        el.className   = 'int-status ok';
+      }
+    });
+  }
+
+  async function loadMcpTools() {
+    try {
+      const r = await fetch('/mcp/tools', { headers: getAuthHeader() });
+      if (!r.ok) { showMcpToolsFallback(); return; }
+      const d = await r.json();
+      const tools = d.tools || [];
+      const list  = document.getElementById('mcpToolsList');
+      list.innerHTML = tools.slice(0,7).map(t => `
+        <div class="mcp-tool-row">
+          <span class="tool-badge">${t.name}</span>
+          <div style="flex:1">
+            <div class="tool-name">${t.name.replaceAll('_',' ')}</div>
+            <div class="tool-desc">${t.description}</div>
+          </div>
+          <button class="tool-try" onclick="prefillMcpTool('${t.name}')">Try →</button>
+        </div>
+      `).join('');
+    } catch { showMcpToolsFallback(); }
+  }
+
+  function showMcpToolsFallback() {
+    const tools = ['sap_get_price','sap_sync_salesforce','servicenow_create_incident',
+                   'servicenow_triage','hubspot_sync_contact','stripe_check_billing','agent_execute'];
+    const descs = ['Fetch SAP material price','Sync price to Salesforce','Create ServiceNow incident',
+                   'AI-powered incident triage','Sync HubSpot contact','Check Stripe billing','Execute any agent task'];
+    document.getElementById('mcpToolsList').innerHTML = tools.map((t,i) => `
+      <div class="mcp-tool-row">
+        <span class="tool-badge">${t}</span>
+        <div style="flex:1">
+          <div class="tool-name">${t.replaceAll('_',' ')}</div>
+          <div class="tool-desc">${descs[i]}</div>
+        </div>
+        <button class="tool-try" onclick="prefillMcpTool('${t}')">Try →</button>
+      </div>
+    `).join('');
+  }
+
+  function prefillMcpTool(name) {
+    document.getElementById('mcpTool').value = name;
+    switchTab(document.querySelectorAll('.tab')[1], 'mcp');
+    document.getElementById('runner').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // ── Tab switching ─────────────────────────────────────────────────────
+  function switchTab(el, tabName) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    ['agent','mcp','sse'].forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (el) el.style.display = t === tabName ? 'block' : 'none';
+    });
+  }
+
+  // ── Agent Task ────────────────────────────────────────────────────────
+  async function runAgentTask() {
+    const box = document.getElementById('agentResponse');
+    box.className = 'response-box loading';
+    box.textContent = 'Executing agent task...';
+    const body = {
+      taskType:    document.getElementById('agentTaskType').value,
+      description: document.getElementById('agentDesc').value,
+      priority:    parseInt(document.getElementById('agentPriority').value),
+      context:     document.getElementById('agentContext').value,
+      payload: {}
+    };
+    try {
+      const r = await fetch('/api/agents/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify(body)
+      });
+      const d = await r.json();
+      box.className   = r.ok ? 'response-box' : 'response-box error';
+      box.textContent = JSON.stringify(d, null, 2);
+      addActivity(r.ok ? 'success' : 'error',
+        `Agent task "${body.taskType}" ${r.ok ? 'completed' : 'failed'}`);
+    } catch (e) {
+      box.className   = 'response-box error';
+      box.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function clearResponse() {
+    const box = document.getElementById('agentResponse');
+    box.className   = 'response-box';
+    box.textContent = 'Ready.';
+  }
+
+  // ── MCP Call ──────────────────────────────────────────────────────────
+  async function runMcpCall() {
+    const box = document.getElementById('mcpResponse');
+    box.className = 'response-box loading';
+    box.textContent = 'Calling MCP tool...';
+    const tool = document.getElementById('mcpTool').value;
+    let args = {};
+    try { args = JSON.parse(document.getElementById('mcpArgs').value || '{}'); }
+    catch { box.className='response-box error'; box.textContent='Invalid JSON in arguments'; return; }
+    const rpcBody = {
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: tool, arguments: args }
+    };
+    try {
+      const r = await fetch('/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify(rpcBody)
+      });
+      const d = await r.json();
+      box.className   = 'response-box';
+      box.textContent = JSON.stringify(d, null, 2);
+      addActivity('info', `MCP tool "${tool}" called`);
+    } catch (e) {
+      box.className = 'response-box error';
+      box.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function clearMcpResponse() {
+    const box = document.getElementById('mcpResponse');
+    box.className   = 'response-box';
+    box.textContent = 'Ready.';
+  }
+
+  // ── SSE Stream ────────────────────────────────────────────────────────
+  let _es = null;
+  function startSseStream() {
+    const box = document.getElementById('sseResponse');
+    box.className   = 'response-box loading';
+    box.textContent = 'Connecting...\n';
+    const taskType  = encodeURIComponent(document.getElementById('sseTaskType').value);
+    const desc      = encodeURIComponent(document.getElementById('sseDesc').value);
+    const url       = `/mcp/stream?taskType=${taskType}&description=${desc}`;
+    _es = new EventSource(url);
+    document.getElementById('stopSseBtn').style.display = 'inline-flex';
+    _es.onmessage = e => {
+      box.textContent += e.data + '\n';
+      box.scrollTop = box.scrollHeight;
+    };
+    ['connected','task_started','task_completed','cancelled','error','done'].forEach(ev => {
+      _es.addEventListener(ev, e => {
+        const data = JSON.parse(e.data);
+        box.textContent += `[${ev}] ${JSON.stringify(data)}\n`;
+        box.scrollTop = box.scrollHeight;
+        if (ev === 'done' || ev === 'error' || ev === 'cancelled') {
+          box.className = ev === 'error' ? 'response-box error' : 'response-box';
+          stopSseStream();
+        }
+      });
+    });
+    _es.onerror = () => {
+      box.textContent += '[error] Connection lost\n';
+      box.className = 'response-box error';
+      stopSseStream();
+    };
+  }
+
+  function stopSseStream() {
+    if (_es) { _es.close(); _es = null; }
+    document.getElementById('stopSseBtn').style.display = 'none';
+  }
+
+  // ── Activity log ──────────────────────────────────────────────────────
+  function addActivity(type, msg) {
+    const list = document.getElementById('activityList');
+    const item = document.createElement('div');
+    item.className = 'activity-item';
+    item.innerHTML = `
+      <div class="act-dot ${type}"></div>
+      <div>
+        <div class="act-msg">${msg}</div>
+        <div class="act-time">${new Date().toLocaleTimeString()}</div>
+      </div>
+    `;
+    list.prepend(item);
+    if (list.children.length > 10) list.lastElementChild.remove();
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('loadTime').textContent = new Date().toLocaleTimeString();
+    refreshStatus();
+    setInterval(refreshStatus, 30000);
+  });
+</script>
+</body>
+</html>

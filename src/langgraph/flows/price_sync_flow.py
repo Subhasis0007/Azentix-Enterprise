@@ -1,6 +1,6 @@
 """
 price_sync_flow.py — SAP → Salesforce Price Sync
-Triggered by: CloudAMQP sap-price-changes queue → n8n → this flow
+Triggered by: CloudAMQP sap-price-changes queue → this LangGraph flow
 Run standalone: python3 src/langgraph/flows/price_sync_flow.py
 """
 import os, json, logging, operator

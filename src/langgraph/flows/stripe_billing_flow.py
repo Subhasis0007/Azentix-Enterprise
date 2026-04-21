@@ -1,6 +1,6 @@
 """
 stripe_billing_flow.py — Stripe Failed Payment Handler
-Triggered by: Stripe webhook → n8n → WebhookController → this flow
+Triggered by: Stripe webhook → WebhookController → this LangGraph flow
 """
 import os, json, logging, operator
 from typing import TypedDict, Annotated, Optional, List

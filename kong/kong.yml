@@ -13,12 +13,17 @@ services:
         paths:      ["/azentix/v1"]
         strip_path: true
         methods:    [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+      - name: azentix-mcp-route
+        paths:         ["/mcp"]
+        strip_path:    false
+        methods:       [GET, POST, OPTIONS]
+        # SSE streams need long read timeout — override per-route
+        response_buffering: false
     plugins:
-      # Auth: replaces APIM subscription keys
       - name: key-auth
         config:
-          key_names: [X-API-Key]
-          hide_credentials: false
+          key_names:         [X-API-Key]
+          hide_credentials:  true   # never forward the key to upstream
 
       # Rate limiting: replaces APIM rate-limit policy
       - name: rate-limiting
@@ -36,10 +41,11 @@ services:
             headers:
               - "X-Gateway: Kong-Azentix/1.0"
 
-      # CORS
+      # CORS — restrict to your own domain in production
+      # Set CORS_ALLOWED_ORIGINS env var; falls back to localhost defaults
       - name: cors
         config:
-          origins:     ["*"]
+          origins:     ["${CORS_ALLOWED_ORIGINS:-http://localhost:3000}"]
           methods:     [GET, POST, OPTIONS]
           headers:     [Authorization, Content-Type, X-API-Key, X-Correlation-Id]
           credentials: false
@@ -57,16 +63,17 @@ services:
           minute: 120
           policy: local
 
-# ── Consumers: replaces APIM subscriptions ────────────────────────────────
+# ── Consumers: keys injected from env — never commit real values ─────────────
+# Override these at deploy time via Kong Admin API or deck --env-file
 consumers:
   - username: azentix-internal
     keyauth_credentials:
-      - key: azentix-internal-key-change-this
+      - key: "${KONG_KEY_INTERNAL:-azentix-internal-replace-in-prod}"
 
-  - username: n8n-workflows
+  - username: langgraph-worker
     keyauth_credentials:
-      - key: n8n-workflow-key-change-this
+      - key: "${KONG_KEY_LANGGRAPH:-langgraph-worker-replace-in-prod}"
 
   - username: external-client
     keyauth_credentials:
-      - key: external-client-key-change-this
+      - key: "${KONG_KEY_EXTERNAL:-external-client-replace-in-prod}"

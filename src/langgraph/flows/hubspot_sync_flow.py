@@ -1,6 +1,6 @@
 """
 hubspot_sync_flow.py — HubSpot Contact Sync from Salesforce
-Triggered by: Salesforce Opportunity stage change → n8n → this flow
+Triggered by: Salesforce Opportunity stage change → this LangGraph flow
 """
 import os, json, logging, operator
 from typing import TypedDict, Annotated, Optional, List

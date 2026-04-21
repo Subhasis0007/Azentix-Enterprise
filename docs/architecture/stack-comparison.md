@@ -5,7 +5,7 @@
 | Azure Service | Typical Cost/month | Free Replacement | Free Tier |
 |---|---|---|---|
 | Azure Service Bus | £10–50 | CloudAMQP RabbitMQ | 1M messages/month forever |
-| Azure Logic Apps | pay-per-exec | n8n (self-hosted) | Unlimited workflows |
+| Azure Logic Apps | pay-per-exec | LangGraph Worker (self-hosted) | Unlimited workflows |
 | Azure APIM | £25–100 | Kong Gateway | Open source, unlimited |
 | Azure App Service | £50–200 | Render.com | 750 hrs/month, free tier |
 | Azure Key Vault | £5–20 | Doppler | 3 projects forever |
@@ -31,8 +31,8 @@ Only Azure OpenAI is paid. $200 free credit ≈ 6 months of development.
 └──────────────────────┬───────────────────────────────────────┘
                        │  Queue triggers
 ┌──────────────────────▼───────────────────────────────────────┐
-│              n8n  (replaces Azure Logic Apps)                  │
-│   SAP Price Sync │ Incident Triage │ Stripe Alert             │
+│            LangGraph Worker (Python)                           │
+│   SAP Price Sync │ Incident Triage │ Stripe Alert              │
 └──────────────────────┬───────────────────────────────────────┘
                        │  HTTP POST  (X-API-Key auth)
 ┌──────────────────────▼───────────────────────────────────────┐

@@ -1,6 +1,6 @@
 """
 lead_enrichment_flow.py — Salesforce Lead Enrichment from SAP
-Triggered by: Salesforce new Lead → n8n webhook → this flow
+Triggered by: Salesforce new Lead webhook/event → this LangGraph flow
 """
 import os, json, logging, operator
 from typing import TypedDict, Annotated, Optional, List

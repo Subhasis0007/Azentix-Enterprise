@@ -16,10 +16,6 @@ metrics:
           static_configs:
             - targets: ['kong:8001']
           metrics_path: /metrics
-        - job_name: n8n
-          static_configs:
-            - targets: ['n8n:5678']
-          metrics_path: /metrics
 
 logs:
   positions_directory: /tmp/grafana-agent-positions

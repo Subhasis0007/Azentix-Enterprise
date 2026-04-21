@@ -18,7 +18,7 @@ public record AgentTask
 
 public enum TaskPriority { Low = 0, Normal = 1, High = 2, Critical = 3 }
 
-/// <summary>AgentResult — everything the agent produces. Sent back to n8n and logged to Grafana.</summary>
+/// <summary>AgentResult — everything the agent produces. Returned to clients and logged to Grafana.</summary>
 
 public enum AgentStatus { Pending, Running, Completed, Failed, MaxIterationsReached, HumanReviewRequired }
 

@@ -226,4 +226,5 @@ jobs:
           path: "./"
           head: HEAD
           base: HEAD~1
-        continue-on-error: true   # informational — does not block merge
+        # Blocking on main/develop — do NOT suppress
+        continue-on-error: false

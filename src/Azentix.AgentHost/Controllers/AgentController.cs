@@ -14,7 +14,7 @@ public class AgentController : ControllerBase
     public AgentController(IDirectorAgent director, ILogger<AgentController> log)
     { _director = director; _log = log; }
 
-    /// <summary>Execute an agent task. Called by n8n via Kong Gateway.</summary>
+    /// <summary>Execute an agent task via chat UI, API clients, or automation through Kong.</summary>
     [HttpPost("execute")]
     [ProducesResponseType(typeof(AgentResult), 200)]
     [ProducesResponseType(400)]

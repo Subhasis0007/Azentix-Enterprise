@@ -11,6 +11,7 @@ using Azentix.Agents.Rag;
 using Azentix.Agents.Memory;
 using Azentix.Agents.Plugins;
 using Azentix.Models;
+using Azentix.AgentHost.Middleware;
 
 using Azure.AI.OpenAI;
 using OpenAI;
@@ -263,6 +264,7 @@ builder.Services.AddSingleton(new AgentConfiguration
 // ─────────────────────────────────────────────────────────────
 //
 builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddHealthChecks()
@@ -273,19 +275,37 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+// ─────────────────────────────────────────────────────────────
+// Security middleware (runs before all routes)
+// ─────────────────────────────────────────────────────────────
+app.UseMiddleware<ApiKeyAuthMiddleware>();
+
+// ─────────────────────────────────────────────────────────────
+// Static files (serves wwwroot/dashboard.html)
+// ─────────────────────────────────────────────────────────────
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+// ─────────────────────────────────────────────────────────────
+// OpenAPI + Scalar (dev/staging only, never production)
+// ─────────────────────────────────────────────────────────────
+var isDev = app.Environment.IsDevelopment() ||
+    string.Equals(app.Configuration["ASPNETCORE_ENVIRONMENT"], "Staging",
+        StringComparison.OrdinalIgnoreCase);
+
+if (isDev)
+{
+    app.UseSwagger();
+}
 
 app.MapControllers();
 app.MapHealthChecks("/health");
 
-app.MapGet("/", () => new
+// Root → redirect to chat UI
+app.MapGet("/", (HttpContext ctx) =>
 {
-    name = "Azentix Agent Host",
-    aiEnabled = true,
-    modelProvider = requestedProvider,
-    model = useAzure ? chatDeploy : ollamaChatModel,
-    docs = "/swagger"
+    ctx.Response.Redirect("/chat.html", permanent: false);
+    return Task.CompletedTask;
 });
 
 static string NormalizeServiceNowInstanceUrl(string rawValue)

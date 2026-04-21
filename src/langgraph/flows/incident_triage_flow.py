@@ -1,6 +1,6 @@
 """
 incident_triage_flow.py — ServiceNow Incident Triage
-Triggered by: CloudAMQP servicenow-incidents queue → n8n → this flow
+Triggered by: CloudAMQP servicenow-incidents queue → this LangGraph flow
 """
 import os, json, logging, operator
 from typing import TypedDict, Annotated, Optional, List

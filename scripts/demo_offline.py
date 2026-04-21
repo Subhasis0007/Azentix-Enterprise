@@ -392,7 +392,7 @@ def print_summary(results):
   4. Run: python3 scripts/test_connections.py
   5. Run: dotnet run --project src/Azentix.AgentHost
   6. docker-compose -f docker/docker-compose.yml up -d
-  7. Import n8n-workflows/*.json into n8n UI
+    7. Run LangGraph worker: python3 src/langgraph/worker.py
 """)
 
 

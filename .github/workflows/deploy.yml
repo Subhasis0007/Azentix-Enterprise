@@ -2,7 +2,9 @@
 name: Azentix Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Azentix CI"]
+    types: [completed]
     branches:
       - main
 
@@ -28,19 +30,36 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to Render.com
+    name: Deploy via Pipeline
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'dev' }}
 
     env:
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+      KONG_ADMIN_URL: ${{ secrets.KONG_ADMIN_URL }}
+      KONG_ADMIN_TOKEN: ${{ secrets.KONG_ADMIN_TOKEN }}
+      KONG_WORKSPACE: ${{ secrets.KONG_WORKSPACE }}
+      KONG_PROXY_PUBLIC_URL: ${{ secrets.KONG_PROXY_PUBLIC_URL }}
+      KONG_GATEWAY_API_KEY: ${{ secrets.KONG_GATEWAY_API_KEY }}
       CLOUDAMQP_URL: ${{ secrets.CLOUDAMQP_URL }}
       MODEL_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.use_offline_model == 'true' && 'ollama' || 'azure' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Kong deck
+        run: |
+          curl -sL https://github.com/Kong/deck/releases/download/v1.38.1/deck_1.38.1_linux_amd64.tar.gz \
+            | tar -xz
+          sudo mv deck /usr/local/bin/deck
+          deck version
+
+      - name: Validate kong/kong.yml
+        run: deck file validate kong/kong.yml
 
       - name: Trigger Render deployment
         run: |
@@ -94,6 +113,64 @@ jobs:
           fi
 
           echo "❌ Service unhealthy (HTTP $STATUS)"
+          exit 1
+
+      - name: Sync Kong config (declarative)
+        run: |
+          if [ -z "$KONG_ADMIN_URL" ]; then
+            echo "KONG_ADMIN_URL not configured — skipping Kong sync"
+            exit 0
+          fi
+
+          AUTH_ARGS=""
+          if [ -n "$KONG_ADMIN_TOKEN" ]; then
+            AUTH_ARGS="--headers Kong-Admin-Token:$KONG_ADMIN_TOKEN"
+          fi
+
+          WS_ARGS=""
+          if [ -n "$KONG_WORKSPACE" ]; then
+            WS_ARGS="--workspace $KONG_WORKSPACE"
+          fi
+
+          # shellcheck disable=SC2086
+          deck gateway sync kong/kong.yml --kong-addr "$KONG_ADMIN_URL" $AUTH_ARGS $WS_ARGS
+
+      - name: End-to-end smoke test through Kong only
+        run: |
+          if [ -z "$KONG_PROXY_PUBLIC_URL" ]; then
+            echo "KONG_PROXY_PUBLIC_URL not configured — skipping Kong E2E smoke test"
+            exit 0
+          fi
+
+          HEALTH_URL="$KONG_PROXY_PUBLIC_URL/health"
+          STATUS_URL="$KONG_PROXY_PUBLIC_URL/azentix/v1/api/agents/status"
+
+          echo "🔎 Kong health endpoint: $HEALTH_URL"
+          HEALTH_STATUS=$(curl -s -o /tmp/kong_health.json -w "%{http_code}" "$HEALTH_URL")
+          cat /tmp/kong_health.json
+
+          if [ "$HEALTH_STATUS" != "200" ] && [ "$HEALTH_STATUS" != "503" ]; then
+            echo "❌ Kong health path failed (HTTP $HEALTH_STATUS)"
+            exit 1
+          fi
+
+          if [ -z "$KONG_GATEWAY_API_KEY" ]; then
+            echo "KONG_GATEWAY_API_KEY not configured — skipping authenticated status check"
+            exit 0
+          fi
+
+          echo "🔎 Kong authenticated status endpoint: $STATUS_URL"
+          STATUS_CODE=$(curl -s -o /tmp/kong_status.json -w "%{http_code}" \
+            -H "X-API-Key: $KONG_GATEWAY_API_KEY" \
+            "$STATUS_URL")
+          cat /tmp/kong_status.json
+
+          if [ "$STATUS_CODE" = "200" ] || [ "$STATUS_CODE" = "503" ]; then
+            echo "✅ Kong end-to-end test passed"
+            exit 0
+          fi
+
+          echo "❌ Kong end-to-end test failed (HTTP $STATUS_CODE)"
           exit 1
 
       - name: Publish deployment notification (RabbitMQ)

@@ -23,19 +23,23 @@ public class WebhookController : ControllerBase
         var json = await new StreamReader(HttpContext.Request.Body).ReadToEndAsync();
         _log.LogInformation("Stripe webhook received ({Len} bytes)", json.Length);
 
-        // Signature validation
+        // Signature validation — fail-closed: reject if secret not configured
         var secret = _cfg["STRIPE_WEBHOOK_SECRET"];
-        if (!string.IsNullOrEmpty(secret))
+        if (string.IsNullOrEmpty(secret))
         {
-            try
-            {
-                Stripe.EventUtility.ConstructEvent(
-                    json, Request.Headers["Stripe-Signature"], secret);
-            }
-            catch
-            {
-                return BadRequest(new { error = "Invalid Stripe signature" });
-            }
+            _log.LogWarning("Stripe webhook rejected: STRIPE_WEBHOOK_SECRET not configured");
+            return StatusCode(503, new { error = "Webhook not configured" });
+        }
+
+        try
+        {
+            Stripe.EventUtility.ConstructEvent(
+                json, Request.Headers["Stripe-Signature"], secret);
+        }
+        catch (Stripe.StripeException ex)
+        {
+            _log.LogWarning("Stripe signature validation failed: {Msg}", ex.Message);
+            return BadRequest(new { error = "Invalid Stripe signature" });
         }
 
         var evt  = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
