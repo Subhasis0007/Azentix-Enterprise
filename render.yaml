@@ -23,9 +23,9 @@ services:
         sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
-      - key: AZURE_OPENAI_CHAT_DEPLOYMENT
+      - key: AZURE_OPENAI_DEPLOYMENT_NAME
         value: gpt-4o-mini
-      - key: AZURE_OPENAI_EMBED_DEPLOYMENT
+      - key: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
         value: text-embedding-3-small
       - key: SERVICENOW_INSTANCE_URL
         sync: false
