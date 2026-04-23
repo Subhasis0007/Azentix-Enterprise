@@ -77,6 +77,89 @@ Open:
 - Dashboard: `http://localhost:5000/dashboard.html`
 - MCP tools: `http://localhost:5000/mcp/tools`
 
+## MacBook Air M4: Lowest-Cost Ollama Setup (Recommended)
+
+This project supports fully local inference via Ollama and keeps Kong in front of the app.
+For lowest practical memory footprint on MacBook Air M4, use:
+
+- Chat model: `llama3.2:1b`
+- Embedding model: `nomic-embed-text`
+
+### 1. Install Ollama
+
+```bash
+brew install --cask ollama
+ollama serve
+```
+
+In a new terminal, pull models:
+
+```bash
+ollama pull llama3.2:1b
+ollama pull nomic-embed-text
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Set (or verify) these values in `.env`:
+
+```env
+MODEL_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_API_KEY=ollama
+OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_EMBED_MODEL=nomic-embed-text
+```
+
+Keep Kong keys configured too:
+
+```env
+KONG_KEY_INTERNAL=azentix-internal-key-change-this
+KONG_KEY_LANGGRAPH=langgraph-worker-key
+KONG_KEY_EXTERNAL=external-client-key-change-this
+```
+
+### 3. Start Kong gateway
+
+```bash
+docker compose -f docker/docker-compose.yml up -d kong
+```
+
+### 4. Start API host and worker
+
+API host:
+
+```bash
+cd src
+dotnet run --project Azentix.AgentHost/Azentix.AgentHost.csproj
+```
+
+Worker:
+
+```bash
+cd src/langgraph
+python worker.py
+```
+
+### 5. Verify everything works through Kong
+
+```bash
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: azentix-internal-key-change-this" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Open:
+
+- `http://localhost:8000/chat.html`
+- `http://localhost:8000/dashboard.html`
+
 ## Docker Run
 
 ```bash
@@ -108,8 +191,12 @@ Core AI:
 - `MODEL_PROVIDER` = `azure` or `ollama`
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_API_KEY`
-- `AZURE_OPENAI_CHAT_DEPLOYMENT` (recommend `gpt-4o-mini`)
-- `AZURE_OPENAI_EMBED_DEPLOYMENT`
+- `AZURE_OPENAI_DEPLOYMENT_NAME` (recommend `gpt-4o-mini`)
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
+- `OLLAMA_BASE_URL` (for `MODEL_PROVIDER=ollama`)
+- `OLLAMA_API_KEY` (default `ollama`)
+- `OLLAMA_CHAT_MODEL` (recommended `llama3.2:1b` on MacBook Air M4)
+- `OLLAMA_EMBED_MODEL` (recommended `nomic-embed-text`)
 
 Security/Gateway:
 - `INTERNAL_API_KEY`

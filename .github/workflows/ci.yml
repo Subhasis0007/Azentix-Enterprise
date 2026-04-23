@@ -146,7 +146,7 @@ jobs:
             -e AZURE_OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-small" \
             -e OLLAMA_BASE_URL="http://localhost:11434/v1" \
             -e OLLAMA_API_KEY="ollama" \
-            -e OLLAMA_CHAT_MODEL="qwen3:8b" \
+            -e OLLAMA_CHAT_MODEL="llama3.2:1b" \
             -e OLLAMA_EMBED_MODEL="nomic-embed-text" \
             -e SUPABASE_URL="https://placeholder.supabase.co" \
             -e SUPABASE_ANON_KEY="placeholder-anon-key" \

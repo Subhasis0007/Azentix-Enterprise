@@ -168,11 +168,24 @@ def route_classify(s):
 def compile_incident_triage(config: dict):
     from langgraph.graph import StateGraph, END
     from langgraph.checkpoint.memory import MemorySaver
-    from langchain_openai import AzureChatOpenAI
-    llm = AzureChatOpenAI(azure_endpoint=config["azure_endpoint"],
-                          api_key=config["azure_key"],
-                          azure_deployment="gpt-4o-mini",
-                          api_version="2024-08-01-preview", temperature=0.05)
+    from langchain_openai import AzureChatOpenAI, ChatOpenAI
+
+    provider = (config.get("model_provider") or "ollama").strip().lower()
+    if provider == "azure":
+        llm = AzureChatOpenAI(
+            azure_endpoint=config["azure_endpoint"],
+            api_key=config["azure_key"],
+            azure_deployment=config.get("azure_chat_deployment", "gpt-4o-mini"),
+            api_version="2024-08-01-preview",
+            temperature=0.05,
+        )
+    else:
+        llm = ChatOpenAI(
+            base_url=config.get("ollama_base_url", "http://localhost:11434/v1"),
+            api_key=config.get("ollama_api_key", "ollama"),
+            model=config.get("ollama_chat_model", "llama3.2:1b"),
+            temperature=0.05,
+        )
     g = StateGraph(IncidentTriageState)
     g.add_node("validate",      validate_node)
     g.add_node("fetch_incident", lambda s: fetch_incident_node(s, config))
@@ -191,8 +204,13 @@ def compile_incident_triage(config: dict):
 
 if __name__ == "__main__":
     load_dotenv()
-    config = {"azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
+    config = {"model_provider": os.getenv("MODEL_PROVIDER", "ollama"),
+               "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
                "azure_key":     os.getenv("AZURE_OPENAI_API_KEY"),
+               "azure_chat_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini"),
+               "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+               "ollama_api_key": os.getenv("OLLAMA_API_KEY", "ollama"),
+               "ollama_chat_model": os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b"),
                "snow_url":      os.getenv("SERVICENOW_INSTANCE_URL"),
                "snow_user":     os.getenv("SERVICENOW_USERNAME"),
                "snow_pass":     os.getenv("SERVICENOW_PASSWORD"),

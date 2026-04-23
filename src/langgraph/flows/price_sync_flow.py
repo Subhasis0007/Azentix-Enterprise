@@ -86,12 +86,30 @@ def fetch_sf_node(state, config):
 
 def rag_rules_node(state, config):
     try:
-        from openai import AzureOpenAI
+        from openai import AzureOpenAI, OpenAI
         import psycopg2
-        client = AzureOpenAI(azure_endpoint=config["azure_endpoint"],
-                             api_key=config["azure_key"], api_version="2024-08-01-preview")
-        vec = client.embeddings.create(model="text-embedding-3-small",
-            input="SAP Salesforce price sync approval thresholds governance rules").data[0].embedding
+
+        provider = (config.get("model_provider") or "ollama").strip().lower()
+        if provider == "azure":
+            client = AzureOpenAI(
+                azure_endpoint=config["azure_endpoint"],
+                api_key=config["azure_key"],
+                api_version="2024-08-01-preview",
+            )
+            embed_model = config.get("azure_embed_deployment", "text-embedding-3-small")
+        else:
+            embed_model = config.get("ollama_embed_model", "")
+            if not embed_model:
+                raise RuntimeError("OLLAMA_EMBED_MODEL not configured")
+            client = OpenAI(
+                base_url=config.get("ollama_base_url", "http://localhost:11434/v1"),
+                api_key=config.get("ollama_api_key", "ollama"),
+            )
+
+        vec = client.embeddings.create(
+            model=embed_model,
+            input="SAP Salesforce price sync approval thresholds governance rules",
+        ).data[0].embedding
         conn = psycopg2.connect(config["supabase_db"])
         cur  = conn.cursor()
         cur.execute("SELECT content, 1-(embedding<=>%s::vector) AS sim FROM agent_memory "
@@ -206,11 +224,24 @@ def route_analyse(s):
 def compile_price_sync(config: dict):
     from langgraph.graph import StateGraph, END
     from langgraph.checkpoint.memory import MemorySaver
-    from langchain_openai import AzureChatOpenAI
-    llm = AzureChatOpenAI(azure_endpoint=config["azure_endpoint"],
-                          api_key=config["azure_key"],
-                          azure_deployment="gpt-4o-mini",
-                          api_version="2024-08-01-preview", temperature=0.05)
+    from langchain_openai import AzureChatOpenAI, ChatOpenAI
+
+    provider = (config.get("model_provider") or "ollama").strip().lower()
+    if provider == "azure":
+        llm = AzureChatOpenAI(
+            azure_endpoint=config["azure_endpoint"],
+            api_key=config["azure_key"],
+            azure_deployment=config.get("azure_chat_deployment", "gpt-4o-mini"),
+            api_version="2024-08-01-preview",
+            temperature=0.05,
+        )
+    else:
+        llm = ChatOpenAI(
+            base_url=config.get("ollama_base_url", "http://localhost:11434/v1"),
+            api_key=config.get("ollama_api_key", "ollama"),
+            model=config.get("ollama_chat_model", "llama3.2:1b"),
+            temperature=0.05,
+        )
     g = StateGraph(PriceSyncState)
     g.add_node("validate",       validate_node)
     g.add_node("fetch_sap",      lambda s: fetch_sap_node(s, config))
@@ -234,8 +265,15 @@ def compile_price_sync(config: dict):
 if __name__ == "__main__":
     load_dotenv()
     config = {
+        "model_provider":   os.getenv("MODEL_PROVIDER", "ollama"),
         "azure_endpoint":   os.getenv("AZURE_OPENAI_ENDPOINT"),
         "azure_key":        os.getenv("AZURE_OPENAI_API_KEY"),
+        "azure_chat_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini"),
+        "azure_embed_deployment": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
+        "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        "ollama_api_key": os.getenv("OLLAMA_API_KEY", "ollama"),
+        "ollama_chat_model": os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b"),
+        "ollama_embed_model": os.getenv("OLLAMA_EMBED_MODEL", ""),
         "supabase_db":      os.getenv("SUPABASE_DB_CONNECTION"),
         "sap_base_url":     os.getenv("SAP_BASE_URL"),
         "sap_api_key":      os.getenv("SAP_API_KEY"),

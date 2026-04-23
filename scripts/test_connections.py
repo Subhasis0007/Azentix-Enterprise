@@ -50,8 +50,16 @@ def check(name, fn):
 
 print(f"\n{BOLD}Azentix — Connection Tests{RESET}\n")
 
+MODEL_PROVIDER = (os.getenv("MODEL_PROVIDER") or "ollama").strip().lower()
+
+
+def is_azure_mode():
+    return MODEL_PROVIDER == "azure"
+
 print("1. Azure OpenAI")
 def t_aoai():
+    if not is_azure_mode():
+        raise SkipCheck("MODEL_PROVIDER is not azure")
     require_env("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY")
     from openai import AzureOpenAI
     endpoint = require_url("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT", ""))
@@ -61,6 +69,34 @@ def t_aoai():
         messages=[{"role":"user","content":"Say OK in one word"}], max_tokens=5)
     return f"→ '{r.choices[0].message.content.strip()}'"
 check("Azure OpenAI gpt-4o-mini", t_aoai)
+
+print("\n1b. Ollama")
+def t_ollama():
+    if is_azure_mode():
+        raise SkipCheck("MODEL_PROVIDER is azure")
+    import requests
+    from openai import OpenAI
+
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    api_key = os.getenv("OLLAMA_API_KEY", "ollama")
+    chat_model = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b")
+
+    # Verify model is pulled in local Ollama daemon.
+    tags = requests.get(base_url.replace("/v1", "/api/tags"), timeout=10)
+    if not tags.ok:
+        raise RuntimeError(f"Ollama tags endpoint failed: HTTP {tags.status_code}")
+    names = {m.get("name") for m in tags.json().get("models", [])}
+    if chat_model not in names:
+        raise RuntimeError(f"Model '{chat_model}' not found. Pull it with: ollama pull {chat_model}")
+
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    resp = client.chat.completions.create(
+        model=chat_model,
+        messages=[{"role": "user", "content": "Reply exactly with OK"}],
+        max_tokens=5,
+    )
+    return f"→ '{resp.choices[0].message.content.strip()}' using {chat_model}"
+check("Ollama local model", t_ollama)
 
 print("\n2. Supabase pgvector")
 def t_supabase():

@@ -40,7 +40,7 @@ var embedDeploy  = cfg["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"] ?? "text-embedding-3
 
 var ollamaBaseUrl   = cfg["OLLAMA_BASE_URL"] ?? "http://localhost:11434/v1";
 var ollamaApiKey    = cfg["OLLAMA_API_KEY"] ?? "ollama";
-var ollamaChatModel = cfg["OLLAMA_CHAT_MODEL"] ?? "qwen3:8b";
+var ollamaChatModel = cfg["OLLAMA_CHAT_MODEL"] ?? "llama3.2:1b";
 var ollamaEmbedModel = cfg["OLLAMA_EMBED_MODEL"];
 
 var azureConfigured =

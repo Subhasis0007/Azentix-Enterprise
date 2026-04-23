@@ -30,8 +30,15 @@ log = logging.getLogger("langgraph-worker")
 def _load_config() -> Dict[str, Any]:
     load_dotenv()
     return {
+        "model_provider": os.getenv("MODEL_PROVIDER", "ollama"),
         "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
         "azure_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+        "azure_chat_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini"),
+        "azure_embed_deployment": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
+        "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        "ollama_api_key": os.getenv("OLLAMA_API_KEY", "ollama"),
+        "ollama_chat_model": os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b"),
+        "ollama_embed_model": os.getenv("OLLAMA_EMBED_MODEL", ""),
         "supabase_db": os.getenv("SUPABASE_DB_CONNECTION", ""),
         "sap_base_url": os.getenv("SAP_BASE_URL", ""),
         "sap_api_key": os.getenv("SAP_API_KEY", ""),
